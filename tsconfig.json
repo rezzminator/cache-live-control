@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": [],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "claude-code": ["./types/claude-code.d.ts"],
+      "claude-code/testing": ["./types/claude-code.d.ts"]
+    }
+  },
+  "include": ["plugins/cache-live-control/hooks", "plugins/cache-live-control/src", "plugins/cache-live-control/tests", "types"]
+}

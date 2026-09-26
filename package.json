@@ -1,0 +1,26 @@
+{
+  "name": "cache-live-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "vitest run --dir tests && claude plugin test plugins/cache-live-control",
+    "test:unit": "vitest run --dir tests",
+    "test:hooks": "claude plugin test plugins/cache-live-control",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.hooks.json",
+    "validate:plugin": "claude plugin validate --strict . && claude plugin validate --strict plugins/cache-live-control",
+    "release:check": "scripts/release-check.sh",
+    "live": "scripts/live-proof.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
+  },
+  "keywords": ["claude-code", "claude-code-plugin", "prompt-cache", "prompt-caching", "cache-ttl", "cache", "sub-agent", "subagent", "token-cost", "function-hooks", "claude-mods", "professor"]
+}

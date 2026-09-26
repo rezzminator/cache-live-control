@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run validate:plugin
+
+  release:
+    name: release
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git show origin/main:plugins/cache-live-control/.claude-plugin/plugin.json > /tmp/main-plugin.json 2>/dev/null || echo '{"version":"0.0.0"}' > /tmp/main-plugin.json
+      - run: scripts/release-check.sh "$(node -p 'require("/tmp/main-plugin.json").version')"

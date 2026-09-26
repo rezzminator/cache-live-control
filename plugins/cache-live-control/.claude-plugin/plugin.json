@@ -1,0 +1,27 @@
+{
+  "name": "cache-live-control",
+  "version": "0.1.0",
+  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
+  "license": "MIT",
+  "author": {
+    "name": "Reza · Professor",
+    "url": "https://github.com/rezzminator/professor"
+  },
+  "repository": "https://github.com/rezzminator/cache-live-control",
+  "homepage": "https://github.com/rezzminator/cache-live-control",
+  "keywords": ["claude-code", "claude-code-plugin", "prompt-cache", "prompt-caching", "cache-ttl", "cache", "sub-agent", "subagent", "token-cost", "function-hooks", "claude-mods", "professor"],
+  "userConfig": {
+    "mainTtl": {
+      "type": "string",
+      "title": "Main chat: starting cache TTL",
+      "description": "The main chat's prompt-cache TTL at session start: \"5m\", \"1h\", or empty to leave it automatic. A CLAUDE_CODE_PROMPT_CACHE_TTL set at launch wins.",
+      "default": ""
+    },
+    "subagentTtl": {
+      "type": "string",
+      "title": "Sub-agents: starting cache TTL",
+      "description": "The sub-agents' prompt-cache TTL at session start: \"5m\", \"1h\", or empty to leave it automatic. A CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set at launch wins.",
+      "default": ""
+    }
+  }
+}

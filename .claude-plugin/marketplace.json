@@ -1,0 +1,27 @@
+{
+  "name": "cache-live-control",
+  "description": "Per-chat prompt-cache TTL control for Claude Code: /cache 5m|1h|auto.",
+  "owner": {
+    "name": "rezzminator",
+    "url": "https://github.com/rezzminator"
+  },
+  "plugins": [
+    {
+      "name": "cache-live-control",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/rezzminator/cache-live-control.git",
+        "path": "plugins/cache-live-control",
+        "ref": "main"
+      },
+      "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "keywords": ["claude-code", "claude-code-plugin", "prompt-cache", "prompt-caching", "cache-ttl", "cache", "sub-agent", "subagent", "token-cost", "function-hooks", "claude-mods", "professor"],
+      "author": {
+        "name": "Reza · Professor",
+        "url": "https://github.com/rezzminator/professor"
+      }
+    }
+  ]
+}
