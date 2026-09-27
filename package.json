@@ -1,6 +1,6 @@
 {
   "name": "cache-live-control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
   "type": "module",

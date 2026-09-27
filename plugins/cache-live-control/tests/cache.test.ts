@@ -7,6 +7,8 @@ import { describe, expect, test } from 'claude-code/testing';
 
 const MAIN = 'CLAUDE_CODE_PROMPT_CACHE_TTL';
 const AGENTS = 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL';
+const ENABLE_1H = 'ENABLE_PROMPT_CACHING_1H';
+const AGENTS_AUTO = "5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it";
 
 function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
@@ -91,5 +93,53 @@ describe('options', () => {
     expect(out.text).toBe(
       'main automatic (settings, agent frontmatter or plan default) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin)',
     );
+  });
+});
+
+describe('ENABLE_PROMPT_CACHING_1H at launch', () => {
+  // Claude Code reads it for the main chat AND every sub-agent; the plugin
+  // keeps its 1h for the main chat only, so sub-agents default to 5m.
+  test('keeps 1h for the main chat only; the sub-agents fall back to 5m', async ($, on) => {
+    const w = world(on, { [ENABLE_1H]: '1' });
+    await $.session.start(START);
+    expect(w.env.has(ENABLE_1H)).toBe(false);
+    expect(w.env.get(MAIN)).toBe('1h');
+    expect(w.env.has(AGENTS)).toBe(false);
+    const out = await $.command.run(run(''));
+    expect(out.text).toBe(`main 1h (ENABLE_PROMPT_CACHING_1H at launch, main chat only) · agents automatic (${AGENTS_AUTO})`);
+  });
+
+  test('a main variable set at launch wins; the sub-agents still lose the 1h', async ($, on) => {
+    const w = world(on, { [ENABLE_1H]: '1', [MAIN]: '5m' });
+    await $.session.start(START);
+    expect(w.env.has(ENABLE_1H)).toBe(false);
+    expect(w.env.get(MAIN)).toBe('5m');
+    expect(w.env.has(AGENTS)).toBe(false);
+  });
+
+  test('main auto and auto return the main chat to the launch 1h', async ($, on) => {
+    const w = world(on, { [ENABLE_1H]: '1' });
+    await $.session.start(START);
+    await $.command.run(run('5m'));
+    expect(w.env.get(MAIN)).toBe('5m');
+    expect((await $.command.run(run('main auto'))).text).toBe('main 1h · agents 5m');
+    expect(w.env.get(MAIN)).toBe('1h');
+    expect((await $.command.run(run('auto'))).text).toBe('main 1h · agents automatic');
+    expect(w.env.has(AGENTS)).toBe(false);
+    expect(w.env.has(ENABLE_1H)).toBe(false);
+  });
+
+  test('/cache agents 1h still raises the sub-agents', async ($, on) => {
+    const w = world(on, { [ENABLE_1H]: '1' });
+    await $.session.start(START);
+    expect((await $.command.run(run('agents 1h'))).text).toBe('main 1h · agents 1h');
+    expect(w.env.get(AGENTS)).toBe('1h');
+  });
+
+  test('an off value is left alone', async ($, on) => {
+    const w = world(on, { [ENABLE_1H]: '0' });
+    await $.session.start(START);
+    expect(w.env.get(ENABLE_1H)).toBe('0');
+    expect(w.env.has(MAIN)).toBe(false);
   });
 });
