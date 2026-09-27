@@ -9,7 +9,7 @@ Change the prompt-cache TTL of one Claude Code chat, instantly and with no model
 /cache agents 5m | 1h | auto  sub-agents only
 ```
 
-`auto` hands the choice back to your settings, agent frontmatter and Claude Code's automatic TTL. The options `mainTtl` and `subagentTtl` set the TTL a session starts with.
+`auto` hands the choice back to your settings, agent frontmatter and Claude Code's automatic TTL. Sub-agents default to 5m: an `ENABLE_PROMPT_CACHING_1H=1` launch keeps its 1h for the main chat only. The options `mainTtl` and `subagentTtl` set the TTL a session starts with.
 
 It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. The full documentation, the precedence table and the cost note live in the repository: https://github.com/rezzminator/cache-live-control
 

@@ -5,15 +5,15 @@
 **Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache 1h`, `/cache auto`, for the main chat, its sub-agents or both.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-58%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
 
 ```text
-/cache                →  cache-live-control: main 1h (set by /cache) · agents automatic (settings, agent frontmatter or plan default)
+/cache                →  cache-live-control: main 1h (set by /cache) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it)
 /cache 5m             →  cache-live-control: main 5m · agents 5m
 /cache agents 1h      →  cache-live-control: main 5m · agents 1h
 /cache main auto      →  cache-live-control: main automatic · agents 1h
@@ -35,6 +35,10 @@ environment variables and settings read at launch.
   model, so it costs nothing.
 - 🎯 **Main chat and sub-agents apart.** `/cache main …` and
   `/cache agents …` set each on its own; `/cache 5m` sets both.
+- 🛡️ **Sub-agents stay 5m by default.** `ENABLE_PROMPT_CACHING_1H=1` at
+  launch turns 1h on for every sub-agent too; the plugin keeps that 1h for
+  the main chat only, so a sub-agent runs 5m unless its own frontmatter,
+  `subagentPromptCacheTtl` or `/cache agents 1h` says otherwise.
 - 🧭 **Status with sources.** `/cache` alone shows each TTL and where it
   comes from, and warns when `FORCE_PROMPT_CACHING_5M` overrides everything.
 - 🔒 **This chat only.** Nothing is written to a settings file; another chat,
@@ -83,8 +87,16 @@ environment afresh each time. The first source that is set wins:
 | 2 | Environment variable, `5m` or `1h` | `CLAUDE_CODE_PROMPT_CACHE_TTL` | `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` |
 | 3 | Setting | `promptCacheTtl` | `subagentPromptCacheTtl` |
 | 4 | Agent frontmatter `experimental: { cacheTtl }` | the agent's | the agent's |
-| 5 | `ENABLE_PROMPT_CACHING_1H` | 1h | 1h |
-| 6 | Automatic | 1h on a subscription within its limits; 5m on an API key, Bedrock, Vertex or Foundry | 5m for a built-in sub-agent, measured on a subscription with Claude Code 2.1.283 |
+| 5 | `ENABLE_PROMPT_CACHING_1H` | 1h | 1h, but never with this plugin: see below |
+| 6 | Automatic | 1h on a subscription within its limits; 5m on an API key, Bedrock, Vertex or Foundry | 5m (Claude Code's own `subagentPromptCacheTtl` description: "5 minutes unless ENABLE_PROMPT_CACHING_1H=1"), measured on a subscription with Claude Code 2.1.283 |
+
+At session start the plugin takes row 5 away from the sub-agents: when
+`ENABLE_PROMPT_CACHING_1H` is set, it sets `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`
+(unless that is already set) and unsets `ENABLE_PROMPT_CACHING_1H`. The main
+chat keeps the 1h the launch asked for; a sub-agent falls to rows 3, 4 and 6,
+so it runs 5m unless a setting or its own frontmatter raises it. `/cache main
+auto` returns the main chat to that launch 1h. The variable is unset in the
+whole process, so a program the chat starts afterwards no longer inherits it.
 
 `/cache` sets or unsets the variables of row 2 in this Claude Code process,
 so it beats every setting and frontmatter below it, and `/cache auto` hands
@@ -181,6 +193,7 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | `parse.ts` | `/cache` arguments to an action |
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
 | `options.ts` | The `mainTtl` / `subagentTtl` options and what they set at session start |
+| `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |
 
 ## 🎓 Built with Professor
 

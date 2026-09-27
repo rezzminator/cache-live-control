@@ -2,12 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { formatState, formatStatus, isForced5m, resolveParty, type Ours } from '../plugins/cache-live-control/src/status.ts';
 
 const NONE: Ours = {};
+const AGENTS_AUTO = "5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it";
 
 describe('resolveParty', () => {
-  it('is automatic when the variable is unset or empty', () => {
-    const automatic = { ttl: 'automatic', source: 'settings, agent frontmatter or plan default' };
-    expect(resolveParty('main', {}, NONE)).toEqual(automatic);
-    expect(resolveParty('agents', { agents: '' }, NONE)).toEqual(automatic);
+  it('is automatic when the variable is unset or empty: 5m for the sub-agents', () => {
+    expect(resolveParty('main', {}, NONE)).toEqual({ ttl: 'automatic', source: 'settings, agent frontmatter or plan default' });
+    expect(resolveParty('agents', { agents: '' }, NONE)).toEqual({ ttl: 'automatic', source: AGENTS_AUTO });
+  });
+
+  it('names ENABLE_PROMPT_CACHING_1H while it is still set and the variable is not', () => {
+    expect(resolveParty('agents', { enable1h: '1' }, NONE)).toEqual({ ttl: '1h', source: 'ENABLE_PROMPT_CACHING_1H is set' });
+    expect(resolveParty('main', { enable1h: 'yes' }, NONE)).toEqual({ ttl: '1h', source: 'ENABLE_PROMPT_CACHING_1H is set' });
+    expect(resolveParty('agents', { enable1h: '1', agents: '5m' }, NONE).ttl).toBe('5m');
+    expect(resolveParty('agents', { enable1h: '0' }, NONE)).toEqual({ ttl: 'automatic', source: AGENTS_AUTO });
+  });
+
+  it('credits the launch when the plugin moved ENABLE_PROMPT_CACHING_1H to the main chat', () => {
+    expect(resolveParty('main', { main: '1h' }, { main: { value: '1h', via: 'launch' } })).toEqual({
+      ttl: '1h',
+      source: 'ENABLE_PROMPT_CACHING_1H at launch, main chat only',
+    });
   });
 
   it('credits /cache when the variable holds what the command set', () => {
@@ -47,13 +61,13 @@ describe('isForced5m', () => {
 describe('formatStatus', () => {
   it('lists each party with its source on one line', () => {
     expect(formatStatus({ main: '5m' }, { main: { value: '5m', via: 'command' } })).toBe(
-      'main 5m (set by /cache) · agents automatic (settings, agent frontmatter or plan default)',
+      `main 5m (set by /cache) · agents automatic (${AGENTS_AUTO})`,
     );
   });
 
   it('warns when FORCE_PROMPT_CACHING_5M is set', () => {
     expect(formatStatus({ force5m: '1' }, NONE)).toBe(
-      'main automatic (settings, agent frontmatter or plan default) · agents automatic (settings, agent frontmatter or plan default) · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m',
+      `main automatic (settings, agent frontmatter or plan default) · agents automatic (${AGENTS_AUTO}) · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m`,
     );
   });
 

@@ -4,11 +4,17 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-27
+
+### Changed
+- Sub-agents default to 5m. `ENABLE_PROMPT_CACHING_1H=1` at launch turned 1h on for every sub-agent as well as the main chat, billing each sub-agent cache write at 2× input instead of 1.25×. At session start the plugin now keeps that 1h for the main chat only (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h`, unless already set) and unsets `ENABLE_PROMPT_CACHING_1H`; a sub-agent runs 5m unless `subagentPromptCacheTtl`, its own frontmatter or `/cache agents 1h` raises it. `/cache main auto` returns the main chat to the launch 1h, and `/cache` names `ENABLE_PROMPT_CACHING_1H` whenever it is still set. Nothing to migrate: to keep sub-agents at 1h, set `subagentTtl` to `1h`.
+
 ## [0.1.0] — 2026-09-27
 
 ### Added
 - `/cache`: the prompt-cache TTL of one chat, `5m`, `1h` or automatic, for the main chat (`/cache main …`), its sub-agents (`/cache agents …`) or both, from the next request and with no model turn. `/cache` alone shows each TTL and where it comes from.
 - Options `mainTtl` and `subagentTtl`: the TTL a session starts with.
 
-[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.1.0...develop
+[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.2.0...develop
+[0.2.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.1.0...cache-live-control--v0.2.0
 [0.1.0]: https://github.com/rezzminator/cache-live-control/releases/tag/cache-live-control--v0.1.0

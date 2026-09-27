@@ -1,3 +1,4 @@
+import { isEnvTruthy } from './launch.ts';
 import { OPTION } from './options.ts';
 import { isTtl, PARTIES, VARIABLE, type Party, type Ttl } from './ttl.ts';
 
@@ -9,10 +10,26 @@ export type EnvSnapshot = {
   agents?: string;
   /** FORCE_PROMPT_CACHING_5M: when set, every request uses 5m. */
   force5m?: string;
+  /** ENABLE_PROMPT_CACHING_1H: when set, 1h for both parties whose variable is unset. */
+  enable1h?: string;
 };
 
-/** What this plugin last set a party's variable to, and how. */
-export type Ours = Partial<Record<Party, { value: Ttl; via: 'command' | 'option' }>>;
+/**
+ * What this plugin last set a party's variable to, and how: `/cache`, an
+ * option, or the launch's ENABLE_PROMPT_CACHING_1H moved to the main chat.
+ */
+export type Ours = Partial<Record<Party, { value: Ttl; via: 'command' | 'option' | 'launch' }>>;
+
+const AUTOMATIC: Readonly<Record<Party, string>> = {
+  main: 'settings, agent frontmatter or plan default',
+  agents: "5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it",
+};
+
+function credit(party: Party, via: 'command' | 'option' | 'launch'): string {
+  if (via === 'command') return 'set by /cache';
+  if (via === 'option') return `option ${OPTION[party]}`;
+  return 'ENABLE_PROMPT_CACHING_1H at launch, main chat only';
+}
 
 export type Resolved = {
   /** The TTL the variable forces, `automatic` when none, `unknown` for a value Claude Code does not take. */
@@ -27,10 +44,13 @@ export function isForced5m(value: string | undefined): boolean {
 
 export function resolveParty(party: Party, env: EnvSnapshot, ours: Ours): Resolved {
   const raw = env[party];
-  if (raw === undefined || raw === '') return { ttl: 'automatic', source: 'settings, agent frontmatter or plan default' };
+  if (raw === undefined || raw === '') {
+    if (isEnvTruthy(env.enable1h)) return { ttl: '1h', source: 'ENABLE_PROMPT_CACHING_1H is set' };
+    return { ttl: 'automatic', source: AUTOMATIC[party] };
+  }
   if (!isTtl(raw)) return { ttl: 'unknown', source: `${VARIABLE[party]}=${JSON.stringify(raw)} is not 5m or 1h` };
   const mine = ours[party];
-  if (mine?.value === raw) return { ttl: raw, source: mine.via === 'command' ? 'set by /cache' : `option ${OPTION[party]}` };
+  if (mine?.value === raw) return { ttl: raw, source: credit(party, mine.via) };
   return { ttl: raw, source: `${VARIABLE[party]} set outside this plugin` };
 }
 
