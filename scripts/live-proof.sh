@@ -107,15 +107,18 @@ cp "$F" "$RUN/main.jsonl"
 SUB=$(dirname "$F")/$ID/subagents
 [ -d "$SUB" ] && cp -R "$SUB" "$RUN/subagents"
 
-# The cache-write buckets of one file's requests, per label (the last user
+# The cache-write buckets of one file's requests, per label (the user
 # prompt's "exactly: X"), each message id once: "T1 5m", "T2 1h", ...
+# $2 picks the label: "last" for the main chat, "first" for a sub-agent, whose
+# prompt can carry the parent's whole instruction ("S3. Then ... T8").
 buckets() {
-  jq -r -s '
+  jq -r -s --arg pick "${2:-last}" 'def pick: if $pick == "first" then first else last end;
+
     reduce .[] as $r ({label: "-", seen: {}, out: []};
       if $r.type == "user" and ($r.message.content | type) == "string" and ($r.message.content | test("exactly: [A-Z][0-9]"))
-        then .label = ([$r.message.content | scan("exactly: ([A-Z][0-9])")] | last | .[0])
+        then .label = ([$r.message.content | scan("exactly: ([A-Z][0-9])")] | pick | .[0])
       elif $r.type == "user" and ($r.message.content | type) == "array" and ([$r.message.content[]? | select(.type == "text") | .text | test("exactly: [A-Z][0-9]")] | any)
-        then .label = ([$r.message.content[]? | select(.type == "text") | .text | scan("exactly: ([A-Z][0-9])")] | last | .[0])
+        then .label = ([$r.message.content[]? | select(.type == "text") | .text | scan("exactly: ([A-Z][0-9])")] | pick | .[0])
       elif $r.type == "assistant" and $r.message.usage and (.seen[$r.message.id] | not)
         then .seen[$r.message.id] = true
            | ($r.message.usage.cache_creation // {}) as $c
@@ -127,7 +130,7 @@ buckets() {
 main_rows=$(buckets "$F")
 echo "$main_rows" > "$RUN/main-buckets.txt"
 sub_rows=""
-for s in "$SUB"/*.jsonl; do [ -f "$s" ] && sub_rows+=$(buckets "$s")$'\n'; done
+for s in "$SUB"/*.jsonl; do [ -f "$s" ] && sub_rows+=$(buckets "$s" first)$'\n'; done
 echo "$sub_rows" > "$RUN/sub-buckets.txt"
 
 # (d) A launch with ENABLE_PROMPT_CACHING_1H=1 and no options.
@@ -143,7 +146,7 @@ cp "$F2" "$RUN/launch1h.jsonl"
 SUB2=$(dirname "$F2")/$ID/subagents
 launch_main_rows=$(buckets "$F2")
 launch_sub_rows=""
-for s in "$SUB2"/*.jsonl; do [ -f "$s" ] && launch_sub_rows+=$(buckets "$s")$'\n'; done
+for s in "$SUB2"/*.jsonl; do [ -f "$s" ] && launch_sub_rows+=$(buckets "$s" first)$'\n'; done
 echo "$launch_main_rows" > "$RUN/launch1h-main-buckets.txt"
 echo "$launch_sub_rows" > "$RUN/launch1h-sub-buckets.txt"
 
