@@ -1,6 +1,7 @@
 import { isEnvTruthy } from './launch.ts';
 import { OPTION } from './options.ts';
 import { isTtl, PARTIES, VARIABLE, type Party, type Ttl } from './ttl.ts';
+import { warmthLabel, type Records } from './warmth.ts';
 
 // What the TTL is for each party, and where it comes from.
 
@@ -16,18 +17,21 @@ export type EnvSnapshot = {
 
 /**
  * What this plugin last set a party's variable to, and how: `/cache`, an
- * option, or the launch's ENABLE_PROMPT_CACHING_1H moved to the main chat.
+ * option, a launcher's handoff variable, or the launch's
+ * ENABLE_PROMPT_CACHING_1H moved to the main chat.
  */
-export type Ours = Partial<Record<Party, { value: Ttl; via: 'command' | 'option' | 'launch' }>>;
+export type Via = 'command' | 'option' | 'handoff' | 'launch';
+export type Ours = Partial<Record<Party, { value: Ttl; via: Via }>>;
 
 const AUTOMATIC: Readonly<Record<Party, string>> = {
   main: 'settings, agent frontmatter or plan default',
   agents: "5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it",
 };
 
-function credit(party: Party, via: 'command' | 'option' | 'launch'): string {
+function credit(party: Party, via: Via): string {
   if (via === 'command') return 'set by /cache';
   if (via === 'option') return `option ${OPTION[party]}`;
+  if (via === 'handoff') return 'set at launch';
   return 'ENABLE_PROMPT_CACHING_1H at launch, main chat only';
 }
 
@@ -58,11 +62,15 @@ function forceWarning(env: EnvSnapshot): string[] {
   return isForced5m(env.force5m) ? [`warning: FORCE_PROMPT_CACHING_5M=${JSON.stringify(env.force5m)} is set, so every request uses 5m`] : [];
 }
 
-/** `/cache` with no arguments: each party's TTL and its source, one line. */
-export function formatStatus(env: EnvSnapshot, ours: Ours, optionErrors: readonly string[] = []): string {
+/** Each party's latest request, for the warmth `/cache` shows beside it. */
+export type Warmth = { records: Records; now: number };
+
+/** `/cache` with no arguments: each party's TTL, its source and warmth, one line. */
+export function formatStatus(env: EnvSnapshot, ours: Ours, optionErrors: readonly string[] = [], warmth?: Warmth): string {
   const parties = PARTIES.map((party) => {
     const r = resolveParty(party, env, ours);
-    return `${party} ${r.ttl} (${r.source})`;
+    const warm = warmth === undefined ? '' : `, ${warmthLabel(party, warmth.records[party], warmth.now)}`;
+    return `${party} ${r.ttl} (${r.source}${warm})`;
   });
   return `${[...parties, ...forceWarning(env), ...optionErrors].join(' · ')}`;
 }

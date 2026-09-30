@@ -4,6 +4,12 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+### Added
+- Order-free `/cache` words: parties (`main`, `agents` and its spellings `agent`, `subagents`, `sub-agents`, `both`, `all`) and TTLs (`5m`, `1h`, `auto`) in any order, several groups in one command (`/cache main 1h agents 5m`, `/cache 1h main 5m agents`, `/cache main 1h, agents 5m`). Every earlier form still parses.
+- Warm-cache check: changing the TTL of a party whose cache is still warm asks first in Claude Code's question dialog, since the next request may write the whole cache again (measured on 2.1.285: usually it still reads it, once a raise to 1h rewrote it); declining, dismissing or no dialog changes nothing. `force`, anywhere in the words, skips it.
+- Launcher handoff: `CACHE_LIVE_CONTROL_MAIN_TTL` and `CACHE_LIVE_CONTROL_AGENTS_TTL` set a session's starting TTLs (`5m`, `1h` or `auto`), after a TTL variable set at launch and before the options, and are unset once read.
+- `/cache` status shows each party's warmth (`warm 41m`, `cold`).
+
 ## [0.2.0] — 2026-09-27
 
 ### Changed

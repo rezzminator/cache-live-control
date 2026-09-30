@@ -24,6 +24,10 @@ describe('resolveParty', () => {
     });
   });
 
+  it('credits a launcher handoff as set at launch', () => {
+    expect(resolveParty('main', { main: '1h' }, { main: { value: '1h', via: 'handoff' } })).toEqual({ ttl: '1h', source: 'set at launch' });
+  });
+
   it('credits /cache when the variable holds what the command set', () => {
     expect(resolveParty('main', { main: '5m' }, { main: { value: '5m', via: 'command' } })).toEqual({ ttl: '5m', source: 'set by /cache' });
   });
@@ -69,6 +73,13 @@ describe('formatStatus', () => {
     expect(formatStatus({ force5m: '1' }, NONE)).toBe(
       `main automatic (settings, agent frontmatter or plan default) · agents automatic (${AGENTS_AUTO}) · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m`,
     );
+  });
+
+  it('adds each party\'s warmth when given its latest requests', () => {
+    const now = 100 * 60_000;
+    expect(
+      formatStatus({ main: '1h' }, { main: { value: '1h', via: 'handoff' } }, [], { records: { main: { at: now - 19 * 60_000, ttl: '1h' } }, now }),
+    ).toBe(`main 1h (set at launch, warm 41m) · agents automatic (${AGENTS_AUTO}, cold)`);
   });
 
   it('carries the ignored options', () => {

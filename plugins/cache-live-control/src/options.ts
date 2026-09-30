@@ -1,7 +1,7 @@
-import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
-import type { EnvSnapshot } from './status.ts';
+import { isTtl, PARTIES, type Party, type Ttl } from './ttl.ts';
 
-// The plugin's `userConfig`: a starting TTL per party, applied at session start.
+// The plugin's `userConfig`: a starting TTL per party, applied at session start
+// unless a variable or a launcher's handoff (handoff.ts) comes first.
 
 export const OPTION: Readonly<Record<Party, string>> = { main: 'mainTtl', agents: 'subagentTtl' };
 
@@ -23,18 +23,4 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>): Reso
     else out.errors.push(`option ${name} ${JSON.stringify(raw)} ignored: use 5m, 1h or empty`);
   }
   return out;
-}
-
-/**
- * What the options set at session start: a party whose variable is already
- * set (at launch, or by `/cache` earlier in this process) keeps it, since a
- * variable is the more specific choice for this chat.
- */
-export function optionChange(options: ResolvedOptions, env: EnvSnapshot): Change {
-  const change: Change = {};
-  for (const party of PARTIES) {
-    const value = options[party];
-    if (value !== undefined && (env[party] ?? '') === '') change[party] = value;
-  }
-  return change;
 }
