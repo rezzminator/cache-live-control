@@ -2,12 +2,12 @@
 
 # cache-live-control
 
-**Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache main 1h`, `/cache 1h agents`, words in any order, for the main chat, its sub-agents or both, with a warning before it throws a warm cache away.**
+**Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache main 1h`, `/cache 1h agents`, words in any order, for the main chat, its sub-agents or both, with a one-line warning when a switch touches a warm cache.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-0.2.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-110%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
@@ -15,7 +15,7 @@
 ```text
 /cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold)
 /cache 1h agents      →  cache-live-control: main 1h · agents 1h
-/cache main 5m        →  (main's cache is warm: asks first) switched; the next request may rewrite the cache: main 5m · agents 1h
+/cache main 5m        →  cache-live-control: switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents 1h
 /cache auto main      →  cache-live-control: main automatic · agents 1h
 ```
 
@@ -35,9 +35,9 @@ environment variables and settings read at launch.
   model, so it costs nothing.
 - 🎯 **Main chat and sub-agents apart, words in any order.** `/cache main 1h`,
   `/cache 1h main` and `/cache main 1h agents 5m` all read; `/cache 5m` sets both.
-- 🔥 **Asks before touching a warm cache.** A new TTL may make the next
-  request write the whole cache again, so changing a party whose cache is
-  still warm opens a dialog first; `force` skips it.
+- 🔥 **Warns when it touches a warm cache.** A new TTL may make the next
+  request write the whole cache again, so a switch of a party whose cache is
+  still warm applies at once and says so in its reply.
 - 🛡️ **Sub-agents stay 5m by default.** `ENABLE_PROMPT_CACHING_1H=1` at
   launch turns 1h on for every sub-agent too; the plugin keeps that 1h for
   the main chat only, so a sub-agent runs 5m unless its own frontmatter,
@@ -68,8 +68,8 @@ claude plugin install cache-live-control@cache-live-control
 ## 🧭 Commands
 
 `/cache` takes words in any order: parties (`main`; `agents`, also `agent`,
-`subagents`, `sub-agents`; `both` or `all`), TTLs (`5m`, `1h`, `auto`) and
-`force`. Commas count as spaces.
+`subagents`, `sub-agents`; `both` or `all`) and TTLs (`5m`, `1h`, `auto`).
+Commas count as spaces.
 
 | Command | Main chat | Sub-agents |
 | --- | --- | --- |
@@ -80,7 +80,6 @@ claude plugin install cache-live-control@cache-live-control
 | `/cache agents 5m` / `/cache 5m sub-agents` | unchanged | set |
 | `/cache main agents 1h` / `/cache 1h all` | set | set |
 | `/cache main 1h agents 5m` / `/cache 1h main 5m agents` / `/cache main 1h, agents 5m` | 1h | 5m |
-| `/cache main 5m force` | set, without the warm-cache check | unchanged |
 
 How words group: a group is some parties and one TTL. A group that starts
 with a party runs to its TTL (`main 1h`); one that starts with a TTL takes
@@ -94,7 +93,7 @@ with nothing between them (`/cache 1h 5m`), a party given two TTLs
 "Sub-agents" covers everything Claude Code does not run as the main chat:
 sub-agents, workflows, and background helper requests.
 
-## 🔥 Warm-cache check
+## 🔥 Warm-cache warning
 
 The TTL is part of every request's `cache_control` (Claude Code 2.1.285
 tracks a `cacheControlHash` per request to detect cache breaks), so a new
@@ -103,9 +102,9 @@ Measured with `npm run live` on Claude Code 2.1.285 (Haiku, a subscription),
 the first request after a switch mostly still read the whole prefix: 1h to
 5m read about 33,000 tokens and wrote only the new turn, in all three runs;
 5m to 1h read it in two runs and, in the first, read nothing and rewrote
-33,055 tokens at 1h. The check asks before any switch of a warm cache, since
-the rewrite cannot be ruled out, and the proof records each switch's
-numbers.
+33,055 tokens at 1h. Across the proof runs, 11 of 12 warm switches kept the
+cache (the next request still read about 33,000 tokens); the one rewrite was
+that first 5m-to-1h raise, and it did not repeat.
 
 The plugin notes each party's latest model request: when, and the TTL its
 variable held. A party is **warm** until that request's time plus its TTL.
@@ -113,23 +112,24 @@ An automatic TTL counts as 1h for the main chat (the subscription default;
 the plugin cannot see your plan, so it assumes the longer lifetime and says
 "may") and as 5m for sub-agents (row 6 below, measured).
 
-When `/cache` would change the TTL of a warm party, it asks first, in
-Claude Code's own question dialog:
+A switch always applies at once. When it changed the TTL of a warm party,
+the reply says so in one line:
 
 ```text
-main's prompt cache is warm for 41 more minutes (1h, last request 19m ago); switching it to 5m may rewrite the whole cache on the next request. Switch anyway?
-  Switch now · Keep the warm cache
+switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents automatic
+switched; main's (41m left) and agents' (3m left) caches were warm, the next request may rewrite them: main 5m · agents 1h
 ```
 
-- **Switch now** applies it: `switched; the next request may rewrite the cache: main 5m · agents automatic`.
-- **Keep the warm cache**, a dismissed dialog, or no dialog at all (`-p`, or
-  another dialog already open) changes nothing:
-  `nothing changed: main's cache is warm for 41 more minutes; /cache main 5m force switches anyway`.
+It reads `may have been warm` when the TTL is assumed (an automatic main
+chat) or the new value is `auto`, and `under a minute left` for the last
+minute. No warning when the party is cold, when the variable already holds
+the value, or when the new TTL is the one the warm cache was written at.
+Mid-turn, Claude Code draws a command's reply only once the turn ends, so
+the warning also shows at once as a toast.
 
-No question when the party is cold, when the variable already holds the
-value, or when the new TTL is the one the warm cache was written at.
-`auto` on a warm party whose variable is set asks, with "may". `force`,
-anywhere in the words, skips the check.
+`/cache` warns rather than asks because the cache is usually kept, and a
+question would stop `/cache` working where it matters most: mid-turn, while
+a turn streams, and under another dialog.
 
 ## 🧠 How it works
 
@@ -282,7 +282,7 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
 | `options.ts` | The `mainTtl` / `subagentTtl` options, read and checked |
 | `handoff.ts` | Session start: a launch variable, a launcher's handoff variable, then the option, per party |
-| `warmth.ts` | Each party's latest request, whether its cache is warm, and the question before a change throws it away |
+| `warmth.ts` | Each party's latest request, whether its cache is warm, and the warning a switch of a warm cache prints |
 | `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |
 
 ## 🎓 Built with Professor

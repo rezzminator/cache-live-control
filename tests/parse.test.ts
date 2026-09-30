@@ -6,10 +6,9 @@ const BOTH_1H: Change = { main: '1h', agents: '1h' };
 const SPLIT: Change = { main: '1h', agents: '5m' };
 
 describe('parseArgs', () => {
-  it('reads no arguments, only spaces, or only force as status', () => {
+  it('reads no arguments or only spaces as status', () => {
     expect(parseArgs('')).toEqual({ kind: 'status' });
     expect(parseArgs('   ')).toEqual({ kind: 'status' });
-    expect(parseArgs('force')).toEqual({ kind: 'status' });
   });
 
   it.each<[string, Change]>([
@@ -36,11 +35,7 @@ describe('parseArgs', () => {
     ['main main 1h', { main: '1h' }],
     ['  MAIN   1H ', { main: '1h' }],
   ])('parses %j', (args, change) => {
-    expect(parseArgs(args)).toEqual({ kind: 'set', change, force: false });
-  });
-
-  it.each([['force main 5m'], ['main 5m force'], ['main force 5m']])('takes force anywhere: %j', (args) => {
-    expect(parseArgs(args)).toEqual({ kind: 'set', change: { main: '5m' }, force: true });
+    expect(parseArgs(args)).toEqual({ kind: 'set', change });
   });
 
   it.each([
@@ -50,8 +45,8 @@ describe('parseArgs', () => {
     ['agents 1h main', 'main has no TTL'],
     ['1h main agents 5m', '5m names no party'],
     ['both 1h main 5m', 'main is given twice'],
-    ['7m', '"7m" is not 5m, 1h, auto, main, agents or force'],
-    ['main banana 1h', '"banana" is not 5m, 1h, auto, main, agents or force'],
+    ['7m', '"7m" is not 5m, 1h, auto, main or agents'],
+    ['main banana 1h', '"banana" is not 5m, 1h, auto, main or agents'],
   ])('refuses %j, changing nothing', (args, reason) => {
     expect(parseArgs(args)).toEqual({ kind: 'error', message: `nothing changed: ${reason}; ${USAGE}` });
   });

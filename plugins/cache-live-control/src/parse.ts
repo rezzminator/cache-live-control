@@ -6,11 +6,11 @@ import { PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
 
 export type Action =
   | { kind: 'status' }
-  | { kind: 'set'; change: Change; force: boolean }
+  | { kind: 'set'; change: Change }
   | { kind: 'error'; message: string };
 
 export const USAGE =
-  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h · add force to skip the warm-cache check';
+  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h';
 
 const PARTY_WORDS: Readonly<Record<string, readonly Party[]>> = {
   main: ['main'],
@@ -39,14 +39,12 @@ function fail(reason: string): Action {
 
 export function parseArgs(args: string): Action {
   const words = args.trim().toLowerCase().split(/[\s,]+/).filter((w) => w !== '');
-  const force = words.includes('force');
-  const rest = words.filter((w) => w !== 'force');
-  if (rest.length === 0) return { kind: 'status' };
+  if (words.length === 0) return { kind: 'status' };
 
   const groups: Group[] = [];
   let open: Group | undefined;
   let lastTtl: string | undefined;
-  for (const word of rest) {
+  for (const word of words) {
     const parties = PARTY_WORDS[word];
     const ttl = ttlWord(word);
     if (parties !== undefined) {
@@ -69,7 +67,7 @@ export function parseArgs(args: string): Action {
         groups.push(open);
       }
     } else {
-      return fail(`"${word}" is not 5m, 1h, auto, main, agents or force`);
+      return fail(`"${word}" is not 5m, 1h, auto, main or agents`);
     }
   }
 
@@ -84,5 +82,5 @@ export function parseArgs(args: string): Action {
       change[party] = group.ttl;
     }
   }
-  return { kind: 'set', change, force };
+  return { kind: 'set', change };
 }

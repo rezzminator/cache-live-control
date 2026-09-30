@@ -13,22 +13,20 @@ const AGENTS_AUTO = "5m, unless subagentPromptCacheTtl or the agent's frontmatte
 const HANDOFF_MAIN = 'CACHE_LIVE_CONTROL_MAIN_TTL';
 const HANDOFF_AGENTS = 'CACHE_LIVE_CONTROL_AGENTS_TTL';
 
-/** `answer`: what the AskUserQuestion dialog answers, or an Error it throws; each question asked is kept. */
-function world(on: On, initial: Record<string, string> = {}, answer: string | Error = 'Switch now') {
+function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
   const commands: string[] = [];
-  const asked: string[] = [];
-  on('tool.call', async (_$, e) => {
-    if (e.tool !== 'AskUserQuestion') return { deny: 'not in this test' };
-    const question = String((e as { questions?: { question?: string }[] }).questions?.[0]?.question);
-    asked.push(question);
-    if (answer instanceof Error) throw answer;
-    return { result: { questions: [], answers: { [question]: answer } } };
+  const toasts: { text: string; timeoutMs?: number }[] = [];
+  on('ui.toast', async (_$, e) => {
+    toasts.push({ text: e.text, timeoutMs: e.timeoutMs });
+    return { value: undefined } as never;
   });
   on('turn.step', async function* (_$, e) {
     yield { kind: 'text', index: 0, text: 'hello' } as never;
     return { turnId: e.turnId, index: e.index, answer: 'hello', toolUses: [], stopReason: 'end_turn', usage: null } as never;
   });
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }));
+  on('turn.complete', async (_$, e) => ({ text: e.answer }));
   on('env.get', async (_$, e) => ({ value: env.get(e.name) }));
   on('env.set', async (_$, e) => {
     if (e.value === undefined) env.delete(e.name);
@@ -40,7 +38,7 @@ function world(on: On, initial: Record<string, string> = {}, answer: string | Er
     return { value: { command: e.name } };
   });
   on('session.start', async (_$, e) => ({ cwd: e.cwd }));
-  return { env, commands, asked };
+  return { env, commands, toasts };
 }
 
 /** One model request of a party, read to its end: the chunks and result the plugin let through. */
@@ -110,7 +108,7 @@ describe('/cache', () => {
     const out = await $.command.run(run('main 30m'));
     expect(w.env.get(MAIN)).toBe('1h');
     expect(w.env.has(AGENTS)).toBe(false);
-    expect(out.text).toMatch(/^nothing changed: "30m" is not 5m, 1h, auto, main, agents or force; usage: /);
+    expect(out.text).toMatch(/^nothing changed: "30m" is not 5m, 1h, auto, main or agents; usage: /);
   });
 });
 
@@ -208,7 +206,7 @@ describe('launch handoff', () => {
   });
 });
 
-describe('warm-cache check', () => {
+describe('warm-cache warning', () => {
   test('turn.step passes the stream through unchanged and records the request', async ($, on) => {
     world(on, { [MAIN]: '1h' });
     await $.session.start(START);
@@ -218,54 +216,64 @@ describe('warm-cache check', () => {
     expect((await $.command.run(run(''))).text).toMatch(/^main 1h \(CLAUDE_CODE_PROMPT_CACHE_TTL set outside this plugin, warm 60m\) · agents automatic \(.*, cold\)$/);
   });
 
-  test('a warm change asks; Switch now applies', async ($, on) => {
+  test('a warm change applies at once and says the cache was warm', async ($, on) => {
     const w = world(on, { [MAIN]: '1h' });
     await $.session.start(START);
     await step($);
     const out = await $.command.run(run('main 5m'));
-    expect(w.asked).toEqual([
-      "main's prompt cache is warm for 60 more minutes (1h, last request under a minute ago); switching it to 5m may rewrite the whole cache on the next request. Switch anyway?",
-    ]);
     expect(w.env.get(MAIN)).toBe('5m');
-    expect(out.text).toBe('switched; the next request may rewrite the cache: main 5m · agents automatic');
+    expect(out.text).toBe("switched; main's cache was warm (60m left), the next request may rewrite it: main 5m · agents automatic");
   });
 
-  test('Keep the warm cache changes nothing', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' }, 'Keep the warm cache');
+  test('a warm switch inside a main turn also toasts; the reply is unchanged', async ($, on) => {
+    const w = world(on, { [MAIN]: '1h' });
     await $.session.start(START);
+    await $.turn.start({ text: 'count', turnId: 't' });
     await step($);
-    const out = await $.command.run(run('5m main'));
-    expect(w.env.get(MAIN)).toBe('1h');
-    expect(out.text).toBe("nothing changed: main's cache is warm for 60 more minutes; /cache 5m main force switches anyway");
+    const out = await $.command.run(run('main 5m'));
+    expect(out.text).toBe("switched; main's cache was warm (60m left), the next request may rewrite it: main 5m · agents automatic");
+    expect(w.toasts).toEqual([
+      { text: "main's cache was warm (60m left), the next request may rewrite it — now main 5m · agents automatic", timeoutMs: 10000 },
+    ]);
   });
 
-  test('a dialog that throws changes nothing', async ($, on) => {
-    const w = world(on, { [AGENTS]: '5m' }, new Error('no dialog'));
+  test('no toast once the main turn completed, or for a cold switch inside a turn', async ($, on) => {
+    const w = world(on, { [MAIN]: '1h' });
+    await $.session.start(START);
+    await $.turn.start({ text: 'count', turnId: 't' });
+    expect((await $.command.run(run('agents 1h'))).text).toBe('main 1h · agents 1h');
+    await step($);
+    await $.turn.complete({ turnId: 't', answer: 'done', durationMs: 1, isAborted: false, reason: 'answer' } as never);
+    const out = await $.command.run(run('main 5m'));
+    expect(out.text).toBe("switched; main's cache was warm (60m left), the next request may rewrite it: main 5m · agents 1h");
+    expect(w.toasts).toEqual([]);
+  });
+
+  test('an aborted main turn also ends it: no toast after', async ($, on) => {
+    const w = world(on, { [MAIN]: '1h' });
+    await $.session.start(START);
+    await $.turn.start({ text: 'count', turnId: 't' });
+    await step($);
+    await $.turn.complete({ turnId: 't', answer: '', durationMs: 1, isAborted: true, reason: 'aborted' } as never);
+    await $.command.run(run('main 5m'));
+    expect(w.toasts).toEqual([]);
+  });
+
+  test('a warm sub-agent change applies at once and says so', async ($, on) => {
+    const w = world(on, { [AGENTS]: '5m' });
     await $.session.start(START);
     await step($, 'agent-1');
     const out = await $.command.run(run('agents 1h'));
-    expect(w.asked).toHaveLength(1);
-    expect(w.env.get(AGENTS)).toBe('5m');
-    expect(out.text).toBe("nothing changed: agents' cache is warm for 5 more minutes; /cache agents 1h force switches anyway");
-  });
-
-  test('force skips the ask', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' }, 'Keep the warm cache');
-    await $.session.start(START);
-    await step($);
-    const out = await $.command.run(run('main 5m force'));
-    expect(w.asked).toEqual([]);
-    expect(w.env.get(MAIN)).toBe('5m');
-    expect(out.text).toBe('main 5m · agents automatic');
+    expect(w.env.get(AGENTS)).toBe('1h');
+    expect(out.text).toBe("switched; agents' cache was warm (5m left), the next request may rewrite it: main automatic · agents 1h");
   });
 
   test('a cold party, or a warm one kept at its TTL, changes at once', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' }, 'Keep the warm cache');
+    const w = world(on, { [MAIN]: '1h' });
     await $.session.start(START);
     await step($);
     expect((await $.command.run(run('agents 1h'))).text).toBe('main 1h · agents 1h');
     expect((await $.command.run(run('main 1h'))).text).toBe('main 1h · agents 1h');
-    expect(w.asked).toEqual([]);
     expect(w.env.get(AGENTS)).toBe('1h');
   });
 });

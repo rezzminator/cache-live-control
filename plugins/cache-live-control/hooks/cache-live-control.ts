@@ -5,7 +5,7 @@ import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs } from '../src/parse.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
 import type { Change, Party, Ttl } from '../src/ttl.ts';
-import { keptLine, recordedTtl, warmChanges, warmQuestion, type Records } from '../src/warmth.ts';
+import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
 
 // Thin adapter: every decision lives in src/. Claude Code reads the TTL
 // variables on every request, so setting one changes the next request.
@@ -17,7 +17,7 @@ type State = {
   /** Ignored options and handoff values, shown by `/cache`. */
   errors: string[];
   ours: Ours;
-  /** Each party's latest model request, for the warm-cache check. */
+  /** Each party's latest model request, for the warm-cache warning. */
   records: Records;
   /** The options apply once per process, never over a later `/cache`. */
   optionsApplied: boolean;
@@ -26,6 +26,11 @@ type State = {
    * main chat: `auto` for the main chat returns to that 1h.
    */
   launch1h: boolean;
+  /**
+   * A main-chat turn is running: Claude Code draws a command's reply only once
+   * the turn ends, so a warm switch then also shows its warning as a toast.
+   */
+  mainTurnRunning: boolean;
 };
 
 function message(error: unknown): string {
@@ -118,7 +123,7 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
     await $.command.register({
       name: COMMAND,
       description: 'Prompt-cache TTL, 5m, 1h or auto, for main, agents or both — words in any order',
-      argumentHint: '[main|agents] [5m|1h|auto] [force]',
+      argumentHint: '[main|agents] [5m|1h|auto]',
       immediate: true,
     });
   } catch (error) {
@@ -132,18 +137,14 @@ async function recordStep(st: State, $: EngineInterface, party: Party, at: numbe
   st.records[party] = { at, ttl: recordedTtl(variable) };
 }
 
-/** Asks before a change that throws a warm cache away; true to go ahead. Never true on an error. */
-async function approve($: EngineInterface, question: string): Promise<boolean> {
+/** The warning at once while a main turn runs; a failure is logged and never changes the reply. */
+function toastWarm($: EngineInterface, text: string): void {
   try {
-    const answer = await $.ui.ask(question, { options: [SWITCH, KEEP], header: 'cache' });
-    return answer === SWITCH;
-  } catch {
-    return false;
+    $.ui.toast(text, { timeoutMs: 10_000 });
+  } catch (error) {
+    $.ui.log(`cache-live-control: showing the warm-cache toast failed: ${message(error)}`, { to: 'debug' });
   }
 }
-
-const SWITCH = 'Switch now';
-const KEEP = 'Keep the warm cache';
 
 async function runCommand(st: State, $: EngineInterface, args: string): Promise<{ text: string }> {
   const action = parseArgs(args);
@@ -152,11 +153,11 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
     if (action.kind === 'status') {
       return { text: formatStatus(await readEnv($), st.ours, [...st.options.errors, ...st.errors], { records: st.records, now: Date.now() }) };
     }
-    const warm = action.force ? [] : warmChanges(action.change, await readEnv($), st.records, Date.now(), st.launch1h);
-    if (warm.length > 0 && !(await approve($, warmQuestion(warm)))) return { text: keptLine(warm, args) };
+    const warm = warmChanges(action.change, await readEnv($), st.records, Date.now(), st.launch1h);
     await apply(st, $, action.change, 'command');
     const state = formatState(await readEnv($), st.ours);
-    return { text: warm.length > 0 ? `switched; the next request may rewrite the cache: ${state}` : state };
+    if (warm.length > 0 && st.mainTurnRunning) toastWarm($, `${warmNote(warm)} — now ${state}`);
+    return { text: warm.length > 0 ? `switched; ${warmNote(warm)}: ${state}` : state };
   } catch (error) {
     return { text: `failed, the TTL may be unchanged: ${message(error)}` };
   }
@@ -170,6 +171,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     records: {},
     optionsApplied: false,
     launch1h: false,
+    mainTurnRunning: false,
   };
 
   on('session.start', async ($, e, next) => {
@@ -178,11 +180,32 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return result;
   });
 
+  // Observe only: whether a main-chat turn is running, for the warm-cache toast.
+  // turn.start carries no agentId today; it is read in case a sub-agent's turn
+  // ever carries one. turn.complete fires for aborted turns too.
+  on('turn.start', async ($, e, next) => {
+    try {
+      if ((e as { agentId?: string }).agentId === undefined) st.mainTurnRunning = true;
+    } catch (error) {
+      $.ui.log(`cache-live-control: noting a turn start failed: ${message(error)}`, { to: 'debug' });
+    }
+    return next(e);
+  });
+
+  on('turn.complete', async ($, e, next) => {
+    try {
+      if (e.agentId === undefined) st.mainTurnRunning = false;
+    } catch (error) {
+      $.ui.log(`cache-live-control: noting a turn end failed: ${message(error)}`, { to: 'debug' });
+    }
+    return next(e);
+  });
+
   // Observes only: the stream passes through untouched and is never held.
   on('turn.step', async function* ($, e, next) {
     const party: Party = e.agentId === undefined ? 'main' : 'agents';
     recordStep(st, $, party, Date.now()).catch((error: unknown) => {
-      $.ui.log(`cache-live-control: noting a ${party} request for the warm-cache check failed: ${message(error)}`, { to: 'debug' });
+      $.ui.log(`cache-live-control: noting a ${party} request for the warm-cache warning failed: ${message(error)}`, { to: 'debug' });
     });
     return yield* next(e);
   });

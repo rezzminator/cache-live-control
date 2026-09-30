@@ -4,7 +4,7 @@ import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
 // Whether a party's prompt cache is still warm, and which `/cache` changes
 // would switch a warm cache's TTL: the TTL lives in each request's
 // cache_control, so the next request may write the whole prefix again
-// (measured: usually it still reads it; see the README's warm-cache check).
+// (measured: usually it still reads it; see the README's warm-cache warning).
 
 /** A party's latest model request: when, and the TTL its variable held. */
 export type StepRecord = { at: number; ttl: Ttl | 'automatic' };
@@ -84,43 +84,27 @@ export function warmChanges(change: Change, env: EnvSnapshot, records: Records, 
   return out;
 }
 
-function minutes(ms: number): string {
-  const n = Math.ceil(ms / 60_000);
-  return n === 1 ? '1 more minute' : `${n} more minutes`;
-}
-
-function ago(ms: number): string {
-  const n = Math.floor(ms / 60_000);
-  return n < 1 ? 'under a minute ago' : `${n}m ago`;
+function left(ms: number): string {
+  return ms < 60_000 ? 'under a minute left' : `${Math.ceil(ms / 60_000)}m left`;
 }
 
 function possessive(party: Party): string {
   return party === 'agents' ? "agents'" : `${party}'s`;
 }
 
-function written(w: WarmChange): string {
-  if (!w.automatic) return w.ttl;
-  return `automatic, ${w.party === 'main' ? 'assumed ' : ''}${w.ttl}`;
-}
-
-/** The dialog's one-sentence question. */
-export function warmQuestion(warm: readonly WarmChange[]): string {
-  const may = warm.some((w) => w.may);
-  const clauses = warm.map((w, i) =>
-    i === 0
-      ? `${possessive(w.party)} prompt cache ${may ? 'may be' : 'is'} warm for ${minutes(w.leftMs)} (${written(w)}, last request ${ago(w.agoMs)})`
-      : `${possessive(w.party)} for ${minutes(w.leftMs)} (${written(w)}, last request ${ago(w.agoMs)})`,
-  );
-  const switches =
-    warm.length === 1 ? `switching it to ${warm[0]!.target}` : `switching ${warm.map((w) => `${w.party} to ${w.target}`).join(' and ')}`;
-  const rewrite = `may rewrite ${warm.length === 1 ? 'the whole cache' : 'both caches'} on the next request`;
-  return `${clauses.join(' and ')}; ${switches} ${rewrite}. Switch anyway?`;
-}
-
-/** The line printed when the switch is declined, dismissed or cannot be asked. */
-export function keptLine(warm: readonly WarmChange[], args: string): string {
-  const clauses = warm.map((w, i) => (i === 0 ? `${possessive(w.party)} cache is warm for ${minutes(w.leftMs)}` : `${possessive(w.party)} for ${minutes(w.leftMs)}`));
-  return `nothing changed: ${clauses.join(' and ')}; /cache ${args.trim()} force switches anyway`;
+/**
+ * The note a switch of a warm cache carries: which caches were warm and that
+ * the next request may rewrite them; "may have been" when a TTL is assumed
+ * (automatic main) or the target is automatic.
+ */
+export function warmNote(warm: readonly WarmChange[]): string {
+  const been = warm.some((w) => w.may) ? 'may have been' : warm.length === 1 ? 'was' : 'were';
+  if (warm.length === 1) {
+    const w = warm[0]!;
+    return `${possessive(w.party)} cache ${been} warm (${left(w.leftMs)}), the next request may rewrite it`;
+  }
+  const parties = warm.map((w) => `${possessive(w.party)} (${left(w.leftMs)})`).join(' and ');
+  return `${parties} caches ${been} warm, the next request may rewrite them`;
 }
 
 /** The status suffix for one party: `warm 41m`, `may be warm 41m` or `cold`. */

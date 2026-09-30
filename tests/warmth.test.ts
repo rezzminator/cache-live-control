@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   effectiveTtl,
-  keptLine,
   recordedTtl,
   variableAfter,
   warmChanges,
   warmForMs,
-  warmQuestion,
+  warmNote,
   warmthLabel,
   type Records,
 } from '../plugins/cache-live-control/src/warmth.ts';
@@ -87,23 +86,24 @@ describe('lines', () => {
   const main = { party: 'main', ttl: '1h', automatic: false, may: false, target: '5m', leftMs: 41 * MIN, agoMs: 19 * MIN } as const;
   const agents = { party: 'agents', ttl: '5m', automatic: true, may: false, target: '1h', leftMs: 3 * MIN, agoMs: 2 * MIN } as const;
 
-  it('asks one sentence for one party', () => {
-    expect(warmQuestion([main])).toBe(
-      "main's prompt cache is warm for 41 more minutes (1h, last request 19m ago); switching it to 5m may rewrite the whole cache on the next request. Switch anyway?",
+  it('notes one warm party', () => {
+    expect(warmNote([main])).toBe("main's cache was warm (41m left), the next request may rewrite it");
+  });
+
+  it('says may have been for an assumed TTL or an auto target', () => {
+    expect(warmNote([{ ...main, automatic: true, may: true }])).toBe("main's cache may have been warm (41m left), the next request may rewrite it");
+  });
+
+  it('names both parties in one note', () => {
+    expect(warmNote([main, agents])).toBe("main's (41m left) and agents' (3m left) caches were warm, the next request may rewrite them");
+    expect(warmNote([{ ...main, may: true }, agents])).toBe(
+      "main's (41m left) and agents' (3m left) caches may have been warm, the next request may rewrite them",
     );
   });
 
-  it('names both parties in one question, and says may for an assumed TTL', () => {
-    expect(warmQuestion([{ ...main, automatic: true, may: true }, agents])).toBe(
-      "main's prompt cache may be warm for 41 more minutes (automatic, assumed 1h, last request 19m ago) and agents' for 3 more minutes (automatic, 5m, last request 2m ago); switching main to 5m and agents to 1h may rewrite both caches on the next request. Switch anyway?",
-    );
-  });
-
-  it('prints the kept line with the force hint', () => {
-    expect(keptLine([main], ' main 5m ')).toBe("nothing changed: main's cache is warm for 41 more minutes; /cache main 5m force switches anyway");
-    expect(keptLine([main, { ...agents, leftMs: 30_000 }], '5m')).toBe(
-      "nothing changed: main's cache is warm for 41 more minutes and agents' for 1 more minute; /cache 5m force switches anyway",
-    );
+  it('rounds minutes up and reads under a minute as such', () => {
+    expect(warmNote([{ ...main, leftMs: 40 * MIN + 1 }])).toBe("main's cache was warm (41m left), the next request may rewrite it");
+    expect(warmNote([{ ...agents, leftMs: 30_000 }])).toBe("agents' cache was warm (under a minute left), the next request may rewrite it");
   });
 
   it('labels warmth for the status line', () => {
