@@ -291,6 +291,8 @@ npm run validate:plugin
 npm run live          # live proof in tmux, spends a few cents of Haiku
 ```
 
+To try a checkout in a real session, load it with `--plugin-dir plugins/cache-live-control` (its options key is `cache-live-control@inline`), as `npm run live` does. A local directory marketplace whose plugin folder is a symlink into this checkout loads no hooks: Claude Code refuses a hooks module that resolves outside the marketplace (`Path escapes plugin directory: ./cache-live-control.ts (hooks)`, in the `--debug-file` log).
+
 Work lands on `develop`; `main` holds only releases, and each one is tagged `cache-live-control--vX.Y.Z` with its notes in [CHANGELOG.md](./CHANGELOG.md). Pull requests go to `develop`.
 
 `plugins/cache-live-control/hooks/cache-live-control.ts` is a thin adapter over `plugins/cache-live-control/src/`:
