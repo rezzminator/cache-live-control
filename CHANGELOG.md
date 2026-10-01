@@ -4,6 +4,8 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-01
+
 ### Added
 - Order-free `/cache` words: parties (`main`, `agents` and its spellings `agent`, `subagents`, `sub-agents`, `both`, `all`) and TTLs (`5m`, `1h`, `auto`) in any order, several groups in one command (`/cache main 1h agents 5m`, `/cache 1h main 5m agents`, `/cache main 1h, agents 5m`). Every earlier form still parses.
 - Warm-cache warning: a switch of a party whose cache is still warm applies at once and says so in one line (`switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents 1h`), since the next request may write the whole cache again (measured on 2.1.285: 11 of 12 warm switches kept the cache; the one rewrite was a raise to 1h that did not repeat); mid-turn, Claude Code draws a command's reply only once the turn ends, so the warning also shows at once as a toast.
@@ -21,6 +23,7 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 - `/cache`: the prompt-cache TTL of one chat, `5m`, `1h` or automatic, for the main chat (`/cache main …`), its sub-agents (`/cache agents …`) or both, from the next request and with no model turn. `/cache` alone shows each TTL and where it comes from.
 - Options `mainTtl` and `subagentTtl`: the TTL a session starts with.
 
-[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.2.0...develop
+[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.3.0...develop
+[0.3.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.2.0...cache-live-control--v0.3.0
 [0.2.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.1.0...cache-live-control--v0.2.0
 [0.1.0]: https://github.com/rezzminator/cache-live-control/releases/tag/cache-live-control--v0.1.0
