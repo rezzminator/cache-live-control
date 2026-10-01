@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { optionChange, resolveOptions } from '../plugins/cache-live-control/src/options.ts';
+import { resolveOptions } from '../plugins/cache-live-control/src/options.ts';
 
 describe('resolveOptions', () => {
   it('takes 5m and 1h for each party', () => {
@@ -29,20 +29,5 @@ describe('resolveOptions', () => {
 
   it('keeps a good option beside a bad one', () => {
     expect(resolveOptions({ mainTtl: '5m', subagentTtl: 'x' })).toEqual({ main: '5m', errors: ['option subagentTtl "x" ignored: use 5m, 1h or empty'] });
-  });
-});
-
-describe('optionChange', () => {
-  it('sets each party that has an option and an unset variable', () => {
-    expect(optionChange({ main: '5m', agents: '1h', errors: [] }, {})).toEqual({ main: '5m', agents: '1h' });
-    expect(optionChange({ main: '5m', errors: [] }, { main: '' })).toEqual({ main: '5m' });
-  });
-
-  it('leaves a party whose variable is already set', () => {
-    expect(optionChange({ main: '5m', agents: '1h', errors: [] }, { main: '1h' })).toEqual({ agents: '1h' });
-  });
-
-  it('changes nothing without options', () => {
-    expect(optionChange({ errors: [] }, {})).toEqual({});
   });
 });

@@ -1,0 +1,115 @@
+import type { EnvSnapshot } from './status.ts';
+import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
+
+// Whether a party's prompt cache is still warm, and which `/cache` changes
+// would switch a warm cache's TTL: the TTL lives in each request's
+// cache_control, so the next request may write the whole prefix again
+// (measured: usually it still reads it; see the README's warm-cache warning).
+
+/** A party's latest model request: when, and the TTL its variable held. */
+export type StepRecord = { at: number; ttl: Ttl | 'automatic' };
+
+export type Records = Partial<Record<Party, StepRecord>>;
+
+const TTL_MS: Readonly<Record<Ttl, number>> = { '5m': 5 * 60_000, '1h': 60 * 60_000 };
+
+/** The TTL a request used, from its party's variable at that moment. */
+export function recordedTtl(variable: string | undefined): Ttl | 'automatic' {
+  return isTtl(variable) ? variable : 'automatic';
+}
+
+/**
+ * The lifetime a record's cache has: automatic is 1h for the main chat (the
+ * subscription default; the plugin cannot see the plan, so it assumes the
+ * longer lifetime) and 5m for sub-agents (measured).
+ */
+export function effectiveTtl(party: Party, record: StepRecord): Ttl {
+  if (record.ttl !== 'automatic') return record.ttl;
+  return party === 'main' ? '1h' : '5m';
+}
+
+/** Milliseconds the party's cache stays warm, 0 when cold or never written. */
+export function warmForMs(party: Party, record: StepRecord | undefined, now: number): number {
+  if (record === undefined) return 0;
+  return Math.max(0, record.at + TTL_MS[effectiveTtl(party, record)] - now);
+}
+
+/**
+ * The value a party's variable holds after `/cache` sets it: `auto` on the
+ * main chat returns to the launch's 1h when the plugin moved one there.
+ */
+export function variableAfter(party: Party, value: Ttl | null, launch1h: boolean): Ttl | undefined {
+  if (value === null) return party === 'main' && launch1h ? '1h' : undefined;
+  return value;
+}
+
+export type WarmChange = {
+  party: Party;
+  /** The TTL the warm cache was written at, as assumed for an automatic one. */
+  ttl: Ttl;
+  /** The cache was written with the variable unset (automatic). */
+  automatic: boolean;
+  /** The TTL is assumed (automatic main) or the target is automatic, so the rewrite only may happen. */
+  may: boolean;
+  /** What the variable becomes: a TTL, or `automatic` for unset. */
+  target: Ttl | 'automatic';
+  leftMs: number;
+  agoMs: number;
+};
+
+/** The parties whose TTL the change alters while their cache is warm. */
+export function warmChanges(change: Change, env: EnvSnapshot, records: Records, now: number, launch1h: boolean): WarmChange[] {
+  const out: WarmChange[] = [];
+  for (const party of PARTIES) {
+    const value = change[party];
+    if (value === undefined) continue;
+    const record = records[party];
+    const leftMs = warmForMs(party, record, now);
+    if (record === undefined || leftMs === 0) continue;
+    const next = variableAfter(party, value, launch1h);
+    const current = env[party] === '' ? undefined : env[party];
+    if (next === current) continue;
+    const ttl = effectiveTtl(party, record);
+    if (next !== undefined && next === ttl) continue;
+    out.push({
+      party,
+      ttl,
+      automatic: record.ttl === 'automatic',
+      may: (record.ttl === 'automatic' && party === 'main') || next === undefined,
+      target: next ?? 'automatic',
+      leftMs,
+      agoMs: now - record.at,
+    });
+  }
+  return out;
+}
+
+function left(ms: number): string {
+  return ms < 60_000 ? 'under a minute left' : `${Math.ceil(ms / 60_000)}m left`;
+}
+
+function possessive(party: Party): string {
+  return party === 'agents' ? "agents'" : `${party}'s`;
+}
+
+/**
+ * The note a switch of a warm cache carries: which caches were warm and that
+ * the next request may rewrite them; "may have been" when a TTL is assumed
+ * (automatic main) or the target is automatic.
+ */
+export function warmNote(warm: readonly WarmChange[]): string {
+  const been = warm.some((w) => w.may) ? 'may have been' : warm.length === 1 ? 'was' : 'were';
+  if (warm.length === 1) {
+    const w = warm[0]!;
+    return `${possessive(w.party)} cache ${been} warm (${left(w.leftMs)}), the next request may rewrite it`;
+  }
+  const parties = warm.map((w) => `${possessive(w.party)} (${left(w.leftMs)})`).join(' and ');
+  return `${parties} caches ${been} warm, the next request may rewrite them`;
+}
+
+/** The status suffix for one party: `warm 41m`, `may be warm 41m` or `cold`. */
+export function warmthLabel(party: Party, record: StepRecord | undefined, now: number): string {
+  const left = warmForMs(party, record, now);
+  if (record === undefined || left === 0) return 'cold';
+  return `${record.ttl === 'automatic' && party === 'main' ? 'may be ' : ''}warm ${Math.ceil(left / 60_000)}m`;
+}

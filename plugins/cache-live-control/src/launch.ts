@@ -20,7 +20,8 @@ export type LaunchChange = {
   unsetEnable1h: boolean;
 };
 
-export function launchChange(env: EnvSnapshot): LaunchChange {
+/** `mainChosen`: a launcher's handoff already chose the main chat's TTL (`auto` included). */
+export function launchChange(env: EnvSnapshot, mainChosen = false): LaunchChange {
   if (!isEnvTruthy(env.enable1h)) return { unsetEnable1h: false };
-  return (env.main ?? '') === '' ? { main: '1h', unsetEnable1h: true } : { unsetEnable1h: true };
+  return (env.main ?? '') === '' && !mainChosen ? { main: '1h', unsetEnable1h: true } : { unsetEnable1h: true };
 }
