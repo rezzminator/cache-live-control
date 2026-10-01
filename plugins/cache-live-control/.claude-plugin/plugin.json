@@ -22,6 +22,12 @@
       "title": "Sub-agents: starting cache TTL",
       "description": "The sub-agents' prompt-cache TTL at session start: \"5m\", \"1h\", or empty to leave it automatic. A CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set at launch wins.",
       "default": ""
+    },
+    "ttlNotice": {
+      "type": "boolean",
+      "title": "Tell the main chat its cache TTL",
+      "description": "On: the main chat's first prompt, and the first prompt after its TTL changes or the chat compacts or clears, carries a short note to the model: which TTL it runs on, and whether to delegate long work to sub-agents (1h) or keep work in the chat (5m). Sub-agents never get it.",
+      "default": false
     }
   }
 }

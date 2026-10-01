@@ -30,4 +30,19 @@ describe('resolveOptions', () => {
   it('keeps a good option beside a bad one', () => {
     expect(resolveOptions({ mainTtl: '5m', subagentTtl: 'x' })).toEqual({ main: '5m', errors: ['option subagentTtl "x" ignored: use 5m, 1h or empty'] });
   });
+
+  it('turns the TTL notice on for true, as a boolean or a string', () => {
+    expect(resolveOptions({ ttlNotice: true })).toEqual({ notice: true, errors: [] });
+    expect(resolveOptions({ ttlNotice: 'true' })).toEqual({ notice: true, errors: [] });
+    expect(resolveOptions({ ttlNotice: ' TRUE ' })).toEqual({ notice: true, errors: [] });
+  });
+
+  it('leaves the TTL notice off for false, empty or missing', () => {
+    for (const ttlNotice of [false, 'false', 'False', '', undefined]) expect(resolveOptions({ ttlNotice })).toEqual({ errors: [] });
+  });
+
+  it('ignores any other ttlNotice, naming it and its value', () => {
+    expect(resolveOptions({ mainTtl: '5m', ttlNotice: 'yes' })).toEqual({ main: '5m', errors: ['option ttlNotice "yes" ignored: use true or false'] });
+    expect(resolveOptions({ ttlNotice: 1 })).toEqual({ errors: ['option ttlNotice 1 ignored: use true or false'] });
+  });
 });

@@ -7,7 +7,7 @@
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
@@ -179,10 +179,30 @@ ignores options under any other key.
 | --- | --- | --- |
 | `mainTtl` | empty | The main chat's TTL at session start: `5m`, `1h`, or empty to leave it automatic. |
 | `subagentTtl` | empty | The sub-agents' TTL at session start, the same way. |
+| `ttlNotice` | `false` | Tell the main chat's model which TTL it runs on, and how to delegate on it (below). |
 
 An option applies once, when the session starts, and never over a variable
 already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h)
 or a launcher's handoff (below). A bad value is ignored, and `/cache` names it.
+
+`ttlNotice` (opt-in, off by default) puts a short note beside the main chat's
+prompt, which the model reads and you never see: on the first prompt, and on
+the first one after the main TTL changes or the chat compacts or `/clear`s.
+Sub-agents never get it. The note names the TTL and where it comes from, and
+what it means for the chat's work:
+
+- **1h**: a wait of up to an hour (a sub-agent's run, a background job) keeps
+  the cache warm, while every token written costs 2× the base input price
+  (1.25× at 5m), so the model keeps its context lean and delegates multi-step
+  work to sub-agents.
+- **5m**: any wait over 5 minutes lets the cache expire and the next request
+  writes the whole context again, so the model does what fits in the chat
+  itself and never waits, polls or schedules a wake-up past 5 minutes
+  expecting the cache to hold.
+
+An automatic main chat is assumed 1h, the subscription default (an API-key
+plan runs 5m), and the note says so; `FORCE_PROMPT_CACHING_5M` makes it 5m;
+a main variable Claude Code does not take gets no note.
 
 ```json
 {
@@ -280,7 +300,8 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | `ttl.ts` | The TTL values, the two parties and their variables |
 | `parse.ts` | `/cache` words, in any order, to an action |
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
-| `options.ts` | The `mainTtl` / `subagentTtl` options, read and checked |
+| `options.ts` | The `mainTtl` / `subagentTtl` / `ttlNotice` options, read and checked |
+| `notice.ts` | The `ttlNotice` note: the main TTL it names, its text, and which compaction takes it out |
 | `handoff.ts` | Session start: a launch variable, a launcher's handoff variable, then the option, per party |
 | `warmth.ts` | Each party's latest request, whether its cache is warm, and the warning a switch of a warm cache prints |
 | `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |

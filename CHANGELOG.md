@@ -4,6 +4,9 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+### Added
+- `ttlNotice` option (opt-in, off by default): the main chat's first prompt, and the first one after its TTL changes or the chat compacts or `/clear`s, carries a note the model reads and the user never sees, naming the main TTL and how to work on it (1h: waits are cheap and writes cost 2×, so delegate multi-step work to sub-agents; 5m: a wait over 5 minutes rewrites the context, so keep work in the chat). Sub-agents never get it.
+
 ## [0.3.0] — 2026-10-01
 
 ### Added
