@@ -190,7 +190,7 @@ prompt, which the model reads and you never see: on the first prompt, and on
 the first one after the main TTL changes or the chat compacts or `/clear`s.
 Sub-agents never get it. The note is an order with a threshold:
 
-- **1h**: delegate any task past about 10 tool calls to a sub-agent and wait
+- **1h**: delegate any task past about 30 tool calls to a sub-agent and wait
   for its return; waiting is free on a 1-hour cache, and every token the chat
   writes costs 2× the base input price (1.25× at 5m).
 - **5m**: work directly, delegate only work that cannot fit in the chat, and

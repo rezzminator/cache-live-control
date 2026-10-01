@@ -36,9 +36,9 @@ describe('noticeTtl', () => {
 });
 
 describe('noticeText', () => {
-  it('the 1h note orders delegation past about 10 tool calls', () => {
+  it('the 1h note orders delegation past about 30 tool calls', () => {
     expect(noticeText('1h')).toBe(
-      "Prompt cache: this chat's cache lives 1 hour. Delegate: hand any task that needs more than about 10 tool calls to a sub-agent and wait for its return; do only quick reads, answers and small edits yourself. Waiting is free on a 1-hour cache and every token this chat writes costs double, so this overrides any default to do mid-size work directly.",
+      "Prompt cache: this chat's cache lives 1 hour. Delegate: hand any task that needs more than about 30 tool calls to a sub-agent and wait for its return; do only quick reads, answers and small edits yourself. Waiting is free on a 1-hour cache and every token this chat writes costs double, so this overrides any default to do mid-size work directly.",
     );
   });
 
