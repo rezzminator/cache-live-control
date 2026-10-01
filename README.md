@@ -188,20 +188,17 @@ or a launcher's handoff (below). A bad value is ignored, and `/cache` names it.
 `ttlNotice` (opt-in, off by default) puts a short note beside the main chat's
 prompt, which the model reads and you never see: on the first prompt, and on
 the first one after the main TTL changes or the chat compacts or `/clear`s.
-Sub-agents never get it. The note names the TTL and where it comes from, and
-what it means for the chat's work:
+Sub-agents never get it. The note is an order with a threshold:
 
-- **1h**: a wait of up to an hour (a sub-agent's run, a background job) keeps
-  the cache warm, while every token written costs 2× the base input price
-  (1.25× at 5m), so the model keeps its context lean and delegates multi-step
-  work to sub-agents.
-- **5m**: any wait over 5 minutes lets the cache expire and the next request
-  writes the whole context again, so the model does what fits in the chat
-  itself and never waits, polls or schedules a wake-up past 5 minutes
-  expecting the cache to hold.
+- **1h**: delegate any task past about 10 tool calls to a sub-agent and wait
+  for its return; waiting is free on a 1-hour cache, and every token the chat
+  writes costs 2× the base input price (1.25× at 5m).
+- **5m**: work directly, delegate only work that cannot fit in the chat, and
+  keep every wait under 4 minutes; a longer one expires the cache and the next
+  request writes the whole context again.
 
 An automatic main chat is assumed 1h, the subscription default (an API-key
-plan runs 5m), and the note says so; `FORCE_PROMPT_CACHING_5M` makes it 5m;
+plan runs 5m); `FORCE_PROMPT_CACHING_5M` makes it 5m;
 a main variable Claude Code does not take gets no note.
 
 ```json

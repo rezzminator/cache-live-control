@@ -5,28 +5,25 @@ import type { Ttl } from './ttl.ts';
 // reads beside a prompt, naming the TTL it runs on and how to delegate on it.
 // Sub-agents never get it: they have no prompt of their own to carry it.
 
-/** The TTL the note names, and why the main chat runs on it. */
-export type Notice = { ttl: Ttl; why: string };
-
 /**
  * The main chat's TTL as the next request uses it, or null when it cannot be
  * named (a variable Claude Code does not take): the note never claims one.
  * Automatic is assumed 1h, as warmth.ts's effectiveTtl assumes it.
  */
-export function noticeTtl(env: EnvSnapshot, ours: Ours): Notice | null {
-  if (isForced5m(env.force5m)) return { ttl: '5m', why: 'FORCE_PROMPT_CACHING_5M is set' };
+export function noticeTtl(env: EnvSnapshot, ours: Ours): Ttl | null {
+  if (isForced5m(env.force5m)) return '5m';
   const r = resolveParty('main', env, ours);
   if (r.ttl === 'unknown') return null;
-  if (r.ttl === 'automatic') return { ttl: '1h', why: 'automatic, assumed 1h: the subscription default; an API-key plan runs 5m' };
-  return { ttl: r.ttl, why: r.source };
+  if (r.ttl === 'automatic') return '1h';
+  return r.ttl;
 }
 
-/** The note itself. */
-export function noticeText(n: Notice): string {
-  if (n.ttl === '1h') {
-    return `Prompt cache: this main chat runs on a 1-hour TTL (${n.why}). A wait of up to an hour (a sub-agent's run, a background job) keeps this chat's cache warm, and every token written here costs 2× the base input price at 1h against 1.25× at 5m, so keep this context lean: delegate multi-step work to sub-agents and wait for their returns. A later cache note replaces this one.`;
+/** The note itself: an order the model acts on, its threshold named. */
+export function noticeText(ttl: Ttl): string {
+  if (ttl === '1h') {
+    return "Prompt cache: this chat's cache lives 1 hour. Delegate: hand any task that needs more than about 10 tool calls to a sub-agent and wait for its return; do only quick reads, answers and small edits yourself. Waiting is free on a 1-hour cache and every token this chat writes costs double, so this overrides any default to do mid-size work directly.";
   }
-  return `Prompt cache: this main chat runs on a 5-minute TTL (${n.why}). Any wait over 5 minutes (a sub-agent's run, a background job, a scheduled wake-up) lets this chat's cache expire, and the next request writes the whole context again. Do work that fits in this chat yourself; delegate only work too large for it, and never wait, poll or schedule a wake-up more than 5 minutes out expecting the cache to hold. A later cache note replaces this one.`;
+  return "Prompt cache: this chat's cache lives 5 minutes. Work directly: do the task here with your own tool calls. A sub-agent run, background job or wait longer than about 4 minutes expires this chat's cache and forces a full rewrite of its context, so delegate only work that cannot fit in this chat, and keep every wait under 4 minutes.";
 }
 
 /**

@@ -1,7 +1,7 @@
 import type { EngineInterface, On, PluginOptions, Register } from 'claude-code';
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
 import { launchChange } from '../src/launch.ts';
-import { forgetsNotice, noticeText, noticeTtl, type Notice } from '../src/notice.ts';
+import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
 import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs } from '../src/parse.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
@@ -223,16 +223,16 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // prompt goes through agent.spawn, and the input carries no agentId.
   on('prompt.submit', async ($, e, next) => {
     if (st.options.notice !== true) return next(e);
-    let n: Notice | null;
+    let n: Ttl | null;
     try {
       n = noticeTtl(await readEnv($), st.ours);
     } catch (error) {
       $.ui.log(`cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, { to: 'debug' });
       return next(e);
     }
-    if (n === null || n.ttl === st.noticed) return next(e);
+    if (n === null || n === st.noticed) return next(e);
     const result = await next({ ...e, context: [...(e.context ?? []), noticeText(n)] });
-    if (result.drop === undefined) st.noticed = n.ttl;
+    if (result.drop === undefined) st.noticed = n;
     return result;
   });
 
