@@ -1,6 +1,7 @@
 import type { EngineInterface, On, PluginOptions, Register } from 'claude-code';
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
 import { launchChange } from '../src/launch.ts';
+import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
 import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs } from '../src/parse.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
@@ -31,6 +32,11 @@ type State = {
    * the turn ends, so a warm switch then also shows its warning as a toast.
    */
   mainTurnRunning: boolean;
+  /**
+   * The main TTL the TTL notice last told the main chat (option ttlNotice);
+   * absent when its context holds none: never told, compacted or cleared.
+   */
+  noticed?: Ttl;
 };
 
 function message(error: unknown): string {
@@ -211,4 +217,36 @@ export const register: Register = (on: On, options: PluginOptions) => {
   });
 
   on('command.run', { command: COMMAND }, async ($, e) => runCommand(st, $, e.args));
+
+  // Option ttlNotice: a prompt carries the note when the main TTL differs from
+  // the one last told. prompt.submit is the main chat's alone: a sub-agent's
+  // prompt goes through agent.spawn, and the input carries no agentId.
+  on('prompt.submit', async ($, e, next) => {
+    if (st.options.notice !== true) return next(e);
+    let n: Ttl | null;
+    try {
+      n = noticeTtl(await readEnv($), st.ours);
+    } catch (error) {
+      $.ui.log(`cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, { to: 'debug' });
+      return next(e);
+    }
+    if (n === null || n === st.noticed) return next(e);
+    const result = await next({ ...e, context: [...(e.context ?? []), noticeText(n)] });
+    if (result.drop === undefined) st.noticed = n;
+    return result;
+  });
+
+  // A main-chat compaction takes the note out: the next prompt carries it again.
+  on('session.compact', async (_$, e, next) => {
+    const result = await next(e);
+    if (forgetsNotice(e, result)) delete st.noticed;
+    return result;
+  });
+
+  // A /clear or a resume ends the conversation here (no session.start fires for
+  // the one that follows): the next one has not read the note.
+  on('session.end', async (_$, e, next) => {
+    delete st.noticed;
+    return next(e);
+  });
 };

@@ -58,6 +58,10 @@ function run(args: string) {
   return { command: 'cache', args, origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 80 } };
 }
 
+function prompt(text: string) {
+  return { text, wait: false, origin: { kind: 'composer' as const } };
+}
+
 describe('/cache', () => {
   test('is registered at session start, immediate', async ($, on) => {
     const w = world(on);
@@ -126,6 +130,32 @@ describe('options', () => {
     expect(out.text).toBe(
       'main automatic (settings, agent frontmatter or plan default, cold) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin, cold)',
     );
+  });
+});
+
+describe('TTL notice', () => {
+  // ttlNotice defaults to false, and the kit loads the plugin with its
+  // manifest's defaults (see 'options' above): the note itself, and when it is
+  // due, are covered by tests/notice.test.ts and the live check.
+  test('off by default: no prompt carries a note, across a TTL change, a compaction and a /clear', async ($, on) => {
+    world(on, { [MAIN]: '1h' });
+    const contexts: (readonly string[] | undefined)[] = [];
+    on('prompt.submit', async (_$, e) => {
+      contexts.push(e.context);
+      return { text: e.text, context: e.context };
+    });
+    on('session.compact', async (_$, e) => ({ messages: e.messages }));
+    on('session.end', async (_$, e) => ({ sessionId: e.sessionId }) as never);
+    await $.session.start(START);
+    const first = await $.prompt.submit(prompt('one'));
+    await $.command.run(run('main 5m'));
+    await $.prompt.submit(prompt('two'));
+    await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never);
+    await $.prompt.submit(prompt('three'));
+    await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+    await $.prompt.submit(prompt('four'));
+    expect(first.text).toBe('one');
+    expect(contexts).toEqual([undefined, undefined, undefined, undefined]);
   });
 });
 

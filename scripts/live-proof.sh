@@ -53,14 +53,37 @@ LOG=$RUN/drive.log
 log() { echo "$(date +%T) $*" >> "$LOG"; }
 echo "run dir: $RUN  session: $ID  config: ${CLAUDE_CONFIG_DIR:-default}"
 
-# One session: $1 the session id, $2 variable assignments for the launch
-# (every TTL variable is unset first), $3 the --settings file.
-start() {
+# Ends the proof session: its claude ignores the hangup a killed tmux session
+# sends, so the pane's process and its children are stopped first.
+end_session() {
+  local pid
+  pid=$($T display-message -p -t proof '#{pane_pid}' 2>/dev/null) || return 0
+  pkill -TERM -P "$pid" 2>/dev/null
+  kill -TERM "$pid" 2>/dev/null
   $T kill-session -t proof 2>/dev/null
+}
+
+# On exit: no process left running, and the run's sessions leave the session
+# list (their project folder is named after $WORK), copied to $RUN/transcripts.
+cleanup() {
+  $T capture-pane -p -t proof -S -300 > "$RUN/pane.txt" 2>/dev/null
+  end_session
+  $T kill-server 2>/dev/null
+  local d
+  for d in "$PROJECTS"/*"${RUN##*/}"-work; do
+    [ -d "$d" ] || continue
+    cp -R "$d" "$RUN/transcripts" && rm -rf "$d" || echo "ERROR could not move $d to $RUN/transcripts"
+  done
+}
+
+# One session: $1 the session id, $2 variable assignments for the launch
+# (every TTL variable and launcher handoff variable is unset first), $3 the --settings file.
+start() {
+  end_session
   # CLAUDE_CONFIG_DIR is passed on explicitly: a tmux server keeps the
   # environment it started with, and the transcripts are read from it.
   $T new-session -d -s proof -x 200 -y 50 -c "$WORK" \
-    "env -u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL \
+    "env -u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL -u CACHE_LIVE_CONTROL_MAIN_TTL -u CACHE_LIVE_CONTROL_AGENTS_TTL \
      $2 ${CLAUDE_CONFIG_DIR:+CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'} CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 '$CLAUDE_BIN' --model haiku --setting-sources project --settings '$3' \
      --plugin-dir '$ROOT/plugins/cache-live-control' --session-id $1"
   # Boot: the trust dialog defaults to "No, exit", so Down then Enter.
@@ -73,7 +96,7 @@ start() {
   done
   $T capture-pane -p -t proof > "$RUN/boot-$1.txt"
 }
-trap '$T capture-pane -p -t proof -S -300 > "$RUN/pane.txt" 2>/dev/null; $T kill-server 2>/dev/null' EXIT
+trap cleanup EXIT
 start "$ID" "" "$RUN/settings.json"
 
 transcript() { find -H "$PROJECTS" -maxdepth 2 -name "$ID.jsonl" 2>/dev/null | head -1; }
