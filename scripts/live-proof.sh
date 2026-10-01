@@ -54,13 +54,13 @@ log() { echo "$(date +%T) $*" >> "$LOG"; }
 echo "run dir: $RUN  session: $ID  config: ${CLAUDE_CONFIG_DIR:-default}"
 
 # One session: $1 the session id, $2 variable assignments for the launch
-# (every TTL variable is unset first), $3 the --settings file.
+# (every TTL variable and launcher handoff variable is unset first), $3 the --settings file.
 start() {
   $T kill-session -t proof 2>/dev/null
   # CLAUDE_CONFIG_DIR is passed on explicitly: a tmux server keeps the
   # environment it started with, and the transcripts are read from it.
   $T new-session -d -s proof -x 200 -y 50 -c "$WORK" \
-    "env -u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL \
+    "env -u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL -u CACHE_LIVE_CONTROL_MAIN_TTL -u CACHE_LIVE_CONTROL_AGENTS_TTL \
      $2 ${CLAUDE_CONFIG_DIR:+CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'} CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 '$CLAUDE_BIN' --model haiku --setting-sources project --settings '$3' \
      --plugin-dir '$ROOT/plugins/cache-live-control' --session-id $1"
   # Boot: the trust dialog defaults to "No, exit", so Down then Enter.
