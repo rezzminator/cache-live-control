@@ -4,6 +4,7 @@
 # options (variant.json): the kit loads the plugin under test with its
 # manifest's defaults and has no way to pass options. The installable plugin
 # itself is never changed. Needs CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1.
+# Usage: scripts/test-hook-variants.sh [variant...]  (no names: every variant)
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,6 +15,7 @@ trap 'rm -rf "$tmp"' EXIT
 failed=0
 for dir in "$root"/hook-tests/*/; do
   variant=$(basename "$dir")
+  if [ "$#" -gt 0 ] && ! printf '%s\n' "$@" | grep -qx "$variant"; then continue; fi
   copy=$tmp/$variant
   mkdir -p "$copy/tests/$variant"
   cp -R "$plugin/." "$copy/"

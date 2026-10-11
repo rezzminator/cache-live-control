@@ -72,3 +72,55 @@ describe('resolveOptions', () => {
     });
   });
 });
+
+describe('the sub-agent cache protection options', () => {
+  it('takes resumeGuard as warn or block, in any case; off and empty leave it off', () => {
+    expect(resolveOptions({ resumeGuard: 'block' })).toEqual({ guard: 'block', errors: [] });
+    expect(resolveOptions({ resumeGuard: ' WARN ' })).toEqual({ guard: 'warn', errors: [] });
+    for (const resumeGuard of ['off', '', undefined]) expect(resolveOptions({ resumeGuard })).toEqual({ errors: [] });
+    expect(resolveOptions({ resumeGuard: 'maybe' })).toEqual({ errors: ['option resumeGuard "maybe" ignored: use off, warn or block'] });
+  });
+
+  it('takes resumeGuardMinTokens as tokens or Nk, zero included', () => {
+    expect(resolveOptions({ resumeGuardMinTokens: '80000' })).toEqual({ guardFloor: 80_000, errors: [] });
+    expect(resolveOptions({ resumeGuardMinTokens: '80k' })).toEqual({ guardFloor: 80_000, errors: [] });
+    expect(resolveOptions({ resumeGuardMinTokens: 0 })).toEqual({ guardFloor: 0, errors: [] });
+    expect(resolveOptions({ resumeGuardMinTokens: '' })).toEqual({ errors: [] });
+    const use = 'use a number of tokens such as 60000 or 60k, or empty';
+    for (const raw of ['x', '-5', '1.5k5', true]) {
+      expect(resolveOptions({ resumeGuardMinTokens: raw })).toEqual({ errors: [`option resumeGuardMinTokens ${JSON.stringify(raw)} ignored: ${use}`] });
+    }
+  });
+
+  it('takes resumeGuardPrice as a positive number', () => {
+    expect(resolveOptions({ resumeGuardPrice: '3' })).toEqual({ guardPrice: 3, errors: [] });
+    expect(resolveOptions({ resumeGuardPrice: 2.5 })).toEqual({ guardPrice: 2.5, errors: [] });
+    expect(resolveOptions({ resumeGuardPrice: '' })).toEqual({ errors: [] });
+    const use = 'use a number (USD per million input tokens), or empty';
+    for (const raw of ['abc', '0', '-1']) expect(resolveOptions({ resumeGuardPrice: raw })).toEqual({ errors: [`option resumeGuardPrice ${JSON.stringify(raw)} ignored: ${use}`] });
+  });
+
+  it('takes agentRaiseWaiting and handoff as true or false, as a boolean or its spelling', () => {
+    expect(resolveOptions({ agentRaiseWaiting: true, handoff: 'true' })).toEqual({ agentRaiseWaiting: true, handoff: true, errors: [] });
+    expect(resolveOptions({ agentRaiseWaiting: false, handoff: 'false' })).toEqual({ errors: [] });
+    expect(resolveOptions({ agentRaiseWaiting: 'yes', handoff: 1 })).toEqual({
+      errors: ['option agentRaiseWaiting "yes" ignored: use true or false', 'option handoff 1 ignored: use true or false'],
+    });
+  });
+
+  it('takes agentRaiseAfterExpiries as a whole number of 1 or more', () => {
+    expect(resolveOptions({ agentRaiseAfterExpiries: '3' })).toEqual({ agentRaiseAfter: 3, errors: [] });
+    expect(resolveOptions({ agentRaiseAfterExpiries: '' })).toEqual({ errors: [] });
+    expect(resolveOptions({ agentRaiseAfterExpiries: '0' })).toEqual({
+      errors: ['option agentRaiseAfterExpiries "0" ignored: use a whole number of 1 or more, or empty'],
+    });
+  });
+
+  it('takes handoffDir as a path; empty leaves the default', () => {
+    expect(resolveOptions({ handoffDir: ' /tmp/handoffs ' })).toEqual({ handoffDir: '/tmp/handoffs', errors: [] });
+    expect(resolveOptions({ handoffDir: '' })).toEqual({ errors: [] });
+    expect(resolveOptions({ handoffDir: 5 })).toEqual({ errors: ['option handoffDir 5 ignored: use an absolute directory path, or empty'] });
+    // A relative path would be read against the sub-agent's working directory, not the plugin's.
+    expect(resolveOptions({ handoffDir: 'handoffs' })).toEqual({ errors: ['option handoffDir "handoffs" ignored: use an absolute directory path, or empty'] });
+  });
+});

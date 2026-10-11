@@ -110,3 +110,16 @@ describe('formatState', () => {
     expect(formatState({ main: '1h', force5m: 'yes' }, NONE)).toBe('main 1h · agents automatic · warning: FORCE_PROMPT_CACHING_5M="yes" is set, so every request uses 5m');
   });
 });
+
+describe('the agents\' auto-raise in the status', () => {
+  it('credits the shared raise that holds the agents at 1h', () => {
+    expect(resolveParty('agents', { agents: '1h' }, { agents: { value: '1h', via: 'agent-raise' } })).toEqual({ ttl: '1h', source: 'agent auto-raise (shared 1h)' });
+  });
+
+  it('joins several segments after the parties, in the order given', () => {
+    expect(formatStatus({}, NONE, [], undefined, ['auto-raise off', 'agent-raise off', 'resume-guard off', 'handoff off'])).toMatch(
+      / · auto-raise off · agent-raise off · resume-guard off · handoff off$/,
+    );
+    expect(formatStatus({ force5m: '1' }, NONE, ['option x ignored: y'], undefined, ['a', 'b'])).toMatch(/ · a · b · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m · option x ignored: y$/);
+  });
+});

@@ -1,4 +1,4 @@
-import type { On } from 'claude-code';
+import type { AgentInfo, On } from 'claude-code';
 import type { Engine } from 'claude-code/testing';
 
 // The world beneath the plugin for the variant hook tests (scripts/test-hook-variants.sh):
@@ -42,11 +42,16 @@ export function world(on: On, initial: Record<string, string> = {}) {
   const contexts: (readonly string[] | undefined)[] = [];
   /** What the plugin logged. */
   const logs: string[] = [];
+  /** The agents variable at each sub-agent request, and the usage the next request of an agent reports. */
+  const agentRequests: { agentId: string; ttl: string | undefined }[] = [];
+  const usageFor = new Map<string, { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number; model: string }>();
   let turns = 0;
   on('turn.step', async function* (_$, e) {
     if (e.agentId === undefined) requests.push(env.get(MAIN));
+    else agentRequests.push({ agentId: e.agentId, ttl: env.get(AGENTS) });
     yield { kind: 'text', index: 0, text: 'hello' } as never;
-    return { turnId: e.turnId, index: e.index, answer: 'hello', toolUses: [], stopReason: 'end_turn', usage: null } as never;
+    const usage = e.agentId === undefined ? null : (usageFor.get(e.agentId) ?? null);
+    return { turnId: e.turnId, index: e.index, answer: 'hello', toolUses: [], stopReason: 'end_turn', usage } as never;
   });
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }));
   on('turn.complete', async (_$, e) => ({ text: e.answer }));
@@ -80,7 +85,35 @@ export function world(on: On, initial: Record<string, string> = {}) {
   });
   on('command.register', async (_$, e) => ({ value: { command: e.name } }));
   on('session.start', async (_$, e) => ({ cwd: e.cwd }));
-  on('ui.toast', async () => ({ value: undefined }) as never);
+  const toasts: string[] = [];
+  on('ui.toast', async (_$, e) => {
+    toasts.push(e.text);
+    return { value: undefined } as never;
+  });
+  /** The agents `$.agent.list()` shows; a test edits it. */
+  const agentList: AgentInfo[] = [];
+  /** `listing.fails` makes every `$.agent.list()` throw. */
+  const listing = { fails: false };
+  on('agent.list', async () => {
+    if (listing.fails) throw new Error('agent list refused');
+    return { value: agentList.map((a) => ({ ...a })) } as never;
+  });
+  /** The paths `$.fs.exists` finds. */
+  const files = new Set<string>();
+  on('fs.exists', async (_$, e) => ({ value: files.has(e.path) }) as never);
+  /** Each agent.spawn that reached the bottom: the call, the prompt it carried, the id it started. */
+  const spawned: { tool_use_id: string; prompt: string; agentId: string; parentAgentId?: string; background: boolean }[] = [];
+  on('agent.spawn', async (_$, e) => {
+    const agentId = `ag${spawned.length + 1}`;
+    spawned.push({ tool_use_id: e.tool_use_id, prompt: e.prompt, agentId, parentAgentId: e.parentAgentId, background: e.background });
+    return { model: 'haiku', agentId } as never;
+  });
+  /** Each tool call that reached the bottom, as it arrived. */
+  const calls: Record<string, unknown>[] = [];
+  on('tool.call', async (_$, e) => {
+    calls.push({ ...(e as unknown as Record<string, unknown>) });
+    return { result: 'ok', text: 'ok' } as never;
+  });
   on('ui.log', async (_$, e) => {
     logs.push(e.text);
     return { value: undefined } as never;
@@ -102,7 +135,69 @@ export function world(on: On, initial: Record<string, string> = {}) {
     await $.turn.complete({ turnId, answer: 'ok', durationMs: 1, isAborted: false, reason: 'answer' } as never);
   }
 
-  return { env, clock, reads, during, prompts, sets, refused, requests, promptsSaw, contexts, logs, typed, turn };
+  let agentTurns = 0;
+  /** A sub-agent's request (its turn's first), reporting `context` tokens of usage when given. */
+  async function agentStep($: Engine, agentId: string, context?: number) {
+    agentTurns += 1;
+    const turnId = `at${agentTurns}`;
+    if (context !== undefined) {
+      usageFor.set(agentId, { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: context, model: 'haiku' });
+    }
+    const stream = $.turn.step({ turnId, index: 0, model: 'haiku', messageCount: 1, agentId } as never);
+    for (;;) if ((await stream.next()).done) break;
+    return turnId;
+  }
+
+  /** A sub-agent's turn ends. */
+  async function agentComplete($: Engine, agentId: string) {
+    await $.turn.complete({ turnId: `at${agentTurns}`, agentId, answer: 'ok', durationMs: 1, isAborted: false, reason: 'answer' } as never);
+  }
+
+  /** The Agent tool starts a sub-agent: from the main chat, or from `parentAgentId`. Resolves to the id the bottom gave it. */
+  let spawnCalls = 0;
+  async function spawn($: Engine, over: { name?: string; parentAgentId?: string; background?: boolean; prompt?: string } = {}): Promise<string> {
+    spawnCalls += 1;
+    const result = await $.agent.spawn({ prompt: 'work', description: 'work', background: false, tool_use_id: `toolu_${spawnCalls}`, ...over } as never);
+    return (result as { agentId: string }).agentId;
+  }
+
+  /** The model's SendMessage, from the main chat or from `from`. */
+  async function send($: Engine, to: string, message: string, from?: string) {
+    return $.tool.call({ tool: 'SendMessage', to, message, ...(from === undefined ? {} : { agentId: from }) } as never) as Promise<{ deny?: string; context?: string[] }>;
+  }
+
+  /** A Bash call, from the main chat or from `from`. */
+  async function bash($: Engine, command: string, background: boolean, from?: string) {
+    return $.tool.call({ tool: 'Bash', command, run_in_background: background, ...(from === undefined ? {} : { agentId: from }) } as never);
+  }
+
+  return {
+    env,
+    clock,
+    reads,
+    during,
+    prompts,
+    sets,
+    refused,
+    requests,
+    promptsSaw,
+    contexts,
+    logs,
+    toasts,
+    agentList,
+    listing,
+    files,
+    spawned,
+    calls,
+    agentRequests,
+    typed,
+    turn,
+    agentStep,
+    agentComplete,
+    spawn,
+    send,
+    bash,
+  };
 }
 
 export const START = { cwd: '.', surface: null, isInteractive: true } as const;
@@ -114,6 +209,11 @@ export function run(args: string) {
 /** `/cache` with no arguments, or with the words given. */
 export async function cache($: Engine, args = ''): Promise<string> {
   return (await $.command.run(run(args))).text ?? '';
+}
+
+/** One segment of the `/cache` status line, the one starting with `name`. */
+export async function segment($: Engine, name: string): Promise<string | undefined> {
+  return (await cache($)).split(' · ').find((part) => part.startsWith(name));
 }
 
 /** The auto-raise segment of the `/cache` status line. */

@@ -236,3 +236,22 @@ describe('raiseStatus', () => {
     expect(at(late({ ...newRaise(2), locked: true }))).toBe('auto-raise off: /cache main 5m was typed this session');
   });
 });
+
+import { setAfter } from '../plugins/cache-live-control/src/raise.ts';
+
+describe('setAfter: /cache raise N|off', () => {
+  it('starts a fresh count at the new threshold, unlocked and unfired, keeping the compaction floor and the weighed request', () => {
+    const before: RaiseState = { after: 2, count: 1, locked: true, firedAt: 5, weighed: 9, floor: 4, failed: { write: 'x' } };
+    expect(setAfter(before, 3)).toEqual({ after: 3, count: 0, locked: false, weighed: 9, floor: 4 });
+  });
+
+  it('switches the raise off, leaving the rest', () => {
+    const out = setAfter({ after: 2, count: 1, locked: false, weighed: 9 }, undefined);
+    expect(out).toEqual({ count: 0, locked: false, weighed: 9 });
+    expect('after' in out).toBe(false);
+  });
+
+  it('turns a raise that was off on', () => {
+    expect(setAfter(newRaise(), 2)).toEqual({ after: 2, count: 0, locked: false });
+  });
+});

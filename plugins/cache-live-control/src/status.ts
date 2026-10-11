@@ -18,9 +18,10 @@ export type EnvSnapshot = {
 /**
  * What this plugin last set a party's variable to, and how: `/cache`, an
  * option, a launcher's handoff variable, or the launch's
- * ENABLE_PROMPT_CACHING_1H moved to the main chat, or the auto-raise (raise.ts).
+ * ENABLE_PROMPT_CACHING_1H moved to the main chat, the main chat's auto-raise
+ * (raise.ts) or the agents' (agentraise.ts).
  */
-export type Via = 'command' | 'option' | 'handoff' | 'launch' | 'raise';
+export type Via = 'command' | 'option' | 'handoff' | 'launch' | 'raise' | 'agent-raise';
 export type Ours = Partial<Record<Party, { value: Ttl; via: Via }>>;
 
 const AUTOMATIC: Readonly<Record<Party, string>> = {
@@ -33,6 +34,7 @@ function credit(party: Party, via: Via): string {
   if (via === 'option') return `option ${OPTION[party]}`;
   if (via === 'handoff') return 'set at launch';
   if (via === 'raise') return 'auto-raise, option raiseAfterExpiries';
+  if (via === 'agent-raise') return 'agent auto-raise (shared 1h)';
   return 'ENABLE_PROMPT_CACHING_1H at launch, main chat only';
 }
 
@@ -68,15 +70,16 @@ export type Warmth = { records: Records; now: number };
 
 /**
  * `/cache` with no arguments: each party's TTL, its source and warmth, the
- * auto-raise's segment (raise.ts's raiseStatus) when given, one line.
+ * segments given (the auto-raise's, the agents', the guard's, the handoff's), one line.
  */
-export function formatStatus(env: EnvSnapshot, ours: Ours, optionErrors: readonly string[] = [], warmth?: Warmth, raise?: string): string {
+export function formatStatus(env: EnvSnapshot, ours: Ours, optionErrors: readonly string[] = [], warmth?: Warmth, segments?: string | readonly string[]): string {
   const parties = PARTIES.map((party) => {
     const r = resolveParty(party, env, ours);
     const warm = warmth === undefined ? '' : `, ${warmthLabel(party, warmth.records[party], warmth.now)}`;
     return `${party} ${r.ttl} (${r.source}${warm})`;
   });
-  return `${[...parties, ...(raise === undefined ? [] : [raise]), ...forceWarning(env), ...optionErrors].join(' · ')}`;
+  const extra = segments === undefined ? [] : typeof segments === 'string' ? [segments] : segments;
+  return `${[...parties, ...extra, ...forceWarning(env), ...optionErrors].join(' · ')}`;
 }
 
 /** After a change: the new state, one short line. */

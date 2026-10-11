@@ -1,5 +1,6 @@
 import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status.ts';
 import type { Change } from './ttl.ts';
+import { ago } from './events.ts';
 import { effectiveTtl, warmForMs, type StepRecord } from './warmth.ts';
 
 // The auto-raise (option raiseAfterExpiries): a main chat on a 5m cache that
@@ -104,12 +105,6 @@ export function onSessionEnd(state: RaiseState, now: number): RaiseState {
   return { ...rest, count: 0, floor: now };
 }
 
-function ago(ms: number): string {
-  if (ms < 60_000) return 'just now';
-  const minutes = Math.floor(ms / 60_000);
-  return minutes < 120 ? `${minutes}m ago` : `${Math.floor(minutes / 60)}h ago`;
-}
-
 /**
  * The status segment `/cache` shows: off, counting k of N, fired when, failed
  * why, or why it does not act. Once it fired or was switched off, a failure
@@ -129,4 +124,14 @@ export function raiseStatus(state: RaiseState, env: EnvSnapshot, ours: Ours, now
   const main = resolveParty('main', env, ours);
   if (main.ttl !== '5m') return `auto-raise idle: main is ${main.ttl}`;
   return `auto-raise counting ${state.count} of ${state.after} expiries`;
+}
+
+/**
+ * `/cache raise N|off`: a new threshold starts a fresh count and unlocks the
+ * raise; the compaction floor and the weighed request stay, since they say which
+ * requests already count.
+ */
+export function setAfter(state: RaiseState, after: number | undefined): RaiseState {
+  const { firedAt: _firedAt, failed: _failed, after: _after, count: _count, locked: _locked, ...rest } = state;
+  return after === undefined ? { ...rest, count: 0, locked: false } : { ...rest, after, count: 0, locked: false };
 }

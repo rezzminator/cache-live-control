@@ -7,13 +7,13 @@
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-0.3.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-288%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
 
 ```text
-/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold) · auto-raise off
+/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold) · auto-raise off · agent-raise off · resume-guard off · handoff off
 /cache 1h agents      →  cache-live-control: main 1h · agents 1h
 /cache main 5m        →  cache-live-control: switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents 1h
 /cache auto main      →  cache-live-control: main automatic · agents 1h
@@ -42,6 +42,13 @@ environment variables and settings read at launch.
   launch turns 1h on for every sub-agent too; the plugin keeps that 1h for
   the main chat only, so a sub-agent runs 5m unless its own frontmatter,
   `subagentPromptCacheTtl` or `/cache agents 1h` says otherwise.
+- 🧊 **Sub-agent cache protection, all opt-in.** A sub-agent whose cache
+  expired re-writes its whole context at its next request. The plugin
+  [warns or blocks](#-sub-agent-cache-protection) a `SendMessage` to a cold, large sub-agent
+  (naming the cost in tokens), holds the agents at 1h while one waits on
+  background work, and can ask each sub-agent for a handoff file to start a
+  fresh agent from. Every threshold is set live: `/cache guard block`,
+  `/cache agents raise 2`, `/cache handoff on`.
 - 🧭 **Status with sources.** `/cache` alone shows each TTL, where it
   comes from and whether its cache is warm, and warns when `FORCE_PROMPT_CACHING_5M` overrides everything.
 - 🔒 **This chat only.** Nothing is written to a settings file; another chat,
@@ -92,6 +99,32 @@ with nothing between them (`/cache 1h 5m`), a party given two TTLs
 
 "Sub-agents" covers everything Claude Code does not run as the main chat:
 sub-agents, workflows, and background helper requests.
+
+### Settings words
+
+Setting words change a threshold for the rest of the chat, with no config
+edit. They are lifted out first, key first, and mix with TTL groups in any
+order (`/cache main 5m raise 2 guard block`, `/cache guard floor 80k agents 1h`).
+A value that does not read prints one `nothing changed: …` line with the
+usage, and changes nothing. A party word that keys a setting (`agents raise`,
+`agents waiting`, `main raise`) is no party of a TTL beside it, so a TTL left
+without its own party is refused rather than widened to both:
+`/cache 1h agents raise 2` changes nothing and asks for `/cache agents 1h agents raise 2`.
+The reply names the pieces the command touched; a TTL write that fails still
+applies the settings beside it, and the reply says both.
+
+| Command | Sets | Option |
+| --- | --- | --- |
+| `/cache raise N` / `raise off` (also `main raise …`) | the main chat's auto-raise: expired wakes before main goes to 1h | `raiseAfterExpiries` |
+| `/cache agents raise N` / `agents raise off` | the agents' reactive raise: expired requests of one agent before the agents are held at 1h | `agentRaiseAfterExpiries` |
+| `/cache agents waiting on` / `off` | the agents' predictive raise: hold the agents at 1h while an agent waits on background work | `agentRaiseWaiting` |
+| `/cache guard off` / `warn` / `block` | the cold-resume guard | `resumeGuard` |
+| `/cache guard floor N` (`60000`, `60k`, `1.5k`) | the context below which a cold resume passes | `resumeGuardMinTokens` |
+| `/cache guard price N` / `price off` | USD per million base input tokens, to show dollars | `resumeGuardPrice` |
+| `/cache handoff on` / `off` | ask each spawned sub-agent for a handoff file | `handoff` |
+
+Each word replaces the option's value for this chat; the option stays what
+starts the next one.
 
 ## 🔥 Warm-cache warning
 
@@ -181,6 +214,13 @@ ignores options under any other key.
 | `subagentTtl` | empty | The sub-agents' TTL at session start, the same way. |
 | `ttlNotice` | `false` | Tell the main chat's model which TTL it runs on, and how to delegate on it (below). |
 | `raiseAfterExpiries` | empty (off) | A whole number of 1 or more: on a main chat at 5m, the Nth wake-up to an expired cache goes out at 1h, and main stays 1h (below). |
+| `resumeGuard` | empty (off) | `off`, `warn` or `block`: what to do with a `SendMessage` to a cold, large sub-agent ([below](#-sub-agent-cache-protection)). |
+| `resumeGuardMinTokens` | `60000` | The context, in tokens (`60000` or `60k`), below which a cold resume passes: it costs about what a fresh agent does. |
+| `resumeGuardPrice` | empty | USD per million base input tokens. Set it to see dollars beside the tokens; the plugin owns no price table. |
+| `agentRaiseWaiting` | `false` | Hold the sub-agents' variable at 1h while an agent waits on background work it launched (shared with every sub-agent: below). |
+| `agentRaiseAfterExpiries` | empty (off) | A whole number of 1 or more: hold the sub-agents' variable at 1h for an agent once N of its own requests found its cache expired. |
+| `handoff` | `false` | Append a short instruction to each spawned sub-agent's prompt to write a handoff file before its final answer. |
+| `handoffDir` | empty | Where those files go, an absolute path (a relative one is ignored and named by `/cache`); empty means the plugin's own data directory. |
 
 An option applies once, when the session starts, and never over a variable
 already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h)
@@ -295,6 +335,176 @@ A bad value (`abc`, `0`, `1.5`) is ignored and named by `/cache`
 }
 ```
 
+## 🧊 Sub-agent cache protection
+
+A sub-agent's prompt cache expires after its TTL, 5 minutes unless raised,
+and its next request then writes its whole context again at the cache-write
+price: 1.25× the base input price at 5m, 2× at 1h. Three things force that
+rewrite on a sub-agent: a long tool (a shell it waited on, a sleep or
+polling loop), the completion notice of a background child it waited on, and
+a `SendMessage` to an agent that finished long ago. The pieces below cover
+each, and every one is off until you turn it on.
+
+### Per-agent records
+
+The plugin keeps one record per sub-agent, in memory and bounded (256, the
+agent that asked longest ago goes first; with no guard and no reactive raise,
+an agent whose cache can no longer be warm is forgotten): when its latest
+request went out, the TTL the agents' variable held then, its context
+(`input + cache read + cache creation + output` of its latest response), how
+many of its requests found its own previous cache expired, and the spawn
+call, name and parent it came from. A record feeds the guard and the
+reactive raise. A plugin reload or a resumed session starts with none, and an
+agent with no record is never guarded.
+
+### Cold-resume guard
+
+`resumeGuard` (`off`, `warn`, `block`) watches every `SendMessage`. The
+target is an agent id or a name; a name matches the records first and the
+session's agent list after. A target **passes silently** when it is warm,
+when the session's agent list shows it running (the message reaches it at its
+next step, which rewrites nothing the message caused),
+when its context is under `resumeGuardMinTokens` (a cold resume then costs
+about what a fresh agent does), or when it has no record. A cold target above
+the floor is warned about or blocked, with the gap, the context and the
+rewrite in tokens times the write multiplier of the TTL the resume would
+write at:
+
+```text
+agent researcher has been idle 20m and its prompt cache expired 15m ago (it was written at 5m), so resuming re-writes its whole context: ~187k tokens × 1.25 (a 5m cache write) = ~234k input-token equivalents ($0.70 at $3/M base input). Not sent. To resume it anyway (for example it holds uncommitted work), send the same message beginning with [resume-anyway].
+```
+
+- `block` refuses the call: the model reads the text as the tool's error.
+  `warn` sends the message, adds the same text after the tool result for the
+  model, and shows it as a toast.
+- **Override.** A message that begins with `[resume-anyway]` is sent with the
+  marker removed, whatever the guard says, `off` included; a block explains
+  it every time. A bare marker with no message after it is no override.
+  The marker is a deliberate act of the sender. A repeat of the same message
+  inside a window would let a blind retry defeat the guard, so there is none.
+- Measured with `npm run live` (Claude Code 2.1.296, Haiku, `block`; the
+  script asserts the refusal, the delivery and the cache read, and prints the
+  figures of the run, which are one run's): a
+  worker idle for 330 s was refused as `idle 5m … expired under a minute ago
+  … ~13k tokens`, and the message never reached it; the same message beginning
+  `[resume-anyway]` reached it with the marker removed; the next message, to
+  the now warm worker, passed and read its cache.
+- Dollars appear only with `resumeGuardPrice` (`$0.70` above is 234k tokens
+  at `3`). The plugin owns no price table, and the number is the base input
+  price you give it, times the multiplier.
+- With `handoff` on and the agent's handoff file present, the text adds
+  `A handoff for it is at <path>: spawn a fresh agent from it instead of resuming.`
+- A check that cannot run (the clock or the agent list failed) sends the
+  message and `/cache` shows `could not check a resume of …: <reason>`.
+
+### The agents' auto-raise
+
+Raising the TTL for one sub-agent alone is not possible. Claude Code reads
+`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` once per request, from one variable
+for the whole process, so a value set around one agent's request reaches
+every request built while it holds. Measured on Claude Code 2.1.296 (Haiku,
+four background sub-agents running at once, one raised around each of its own
+requests; a one-off probe, not part of `npm run live`): the raised agent's 3 requests wrote 1h, and so did 5 of the 9
+requests of the other three. So the plugin does not raise one agent; the
+raise is an **explicit, shared** one, and it costs: while it holds, every
+sub-agent's cache writes are billed at 2× instead of 1.25×.
+
+- **`agentRaiseWaiting`** (predictive). An agent that launches background
+  work (a sub-agent spawned with `run_in_background`, or a `Bash` call with
+  `run_in_background`) will end its turn and wait for the notice. The agents'
+  variable is held at 1h from the launch until that agent's turn ends, so the
+  request that ends the turn writes at 1h and the wake reads it.
+- **`agentRaiseAfterExpiries`** (reactive). An agent whose own requests found
+  its previous cache expired N times is held until it finishes (or has been
+  idle for an hour).
+- While any holder lives the variable is `1h`; when the last lets go, the
+  value it held before is put back (unset stays unset) — but only if it still
+  holds our `1h`. A value anyone else set meanwhile stands.
+- Measured with `npm run live` (Claude Code 2.1.296, Haiku; the script
+  asserts the 1h write and the cache read, the figures are one run's): a sub-agent that
+  launched a background child, with `agentRaiseWaiting` on, wrote the request
+  that ended its turn at 1h (9.5k tokens, after a 5m first request); 326 s
+  later its wake read all 16k tokens of that context and wrote 406.
+- The main chat's variable is never touched. The raise acts only while the
+  agents resolve to 5m or automatic. `FORCE_PROMPT_CACHING_5M` stops it
+  (Claude Code takes no 1h then), and says so in `/cache`.
+- **A typed `/cache agents …` outranks it**, as `/cache main …` outranks the
+  main raise: it lets go of every holder and resets the counts, and
+  `/cache agents 5m` switches the raise off for the session
+  (`/cache agents waiting on` brings it back).
+- A failed write shows `agent-raise failed, the TTL may be unchanged: …` and
+  claims no TTL; the next launch asks again. A failed read (the clock or the
+  variables at a launch or, with `agentRaiseAfterExpiries`, at a request; the
+  agent list at a held agent's turn end, which then stays held) shows the same
+  way until a read works. A hand-back that failed shows even once the raise is
+  switched off, since the variable may still be our 1h.
+- Writes in flight are settled when they land: a holder that joins while the
+  1h or the hand-back is being written ends at 1h, a 1h that lands after every
+  holder let go is handed back, and a `/cache agents …` typed meanwhile is
+  written again so it stands.
+- A new conversation (`/clear`, a resumed session) lets go of every holder.
+
+### Handoff
+
+With `handoff` on, each spawned sub-agent's prompt gets a short, neutral
+instruction appended: before its final answer, write a handoff to a file
+(the state of the work, decisions made and alternatives rejected, next steps,
+`file:line` anchors, open questions) so a fresh agent can continue without its
+context, and to say so in one line if it cannot write it. The agent's own id
+is known only after the spawn returns, so the file is named by the id of the
+`Agent` tool call that spawned it: `<handoffDir>/<tool call id>.md`. With
+`handoffDir` empty the directory is the plugin's own data directory:
+`<plugins>/data/<plugin>-<marketplace>/handoffs` for an installed plugin,
+`<config dir>/plugins/data/cache-live-control-inline/handoffs` for one loaded
+with `--plugin-dir` (`<config dir>` is `CLAUDE_CONFIG_DIR`, else `~/.claude`;
+a relative one is not used, since the agent and the plugin would read it
+against different directories).
+When neither is known, `/cache` says `handoff on, no directory: set
+handoffDir` and no prompt is changed. The guard points to the file only once
+it exists.
+
+### Status
+
+`/cache` shows each piece after the TTLs, then the latest events, newest
+first:
+
+```text
+… · auto-raise off · agent-raise holding agents at 1h for lead (since 2m ago) · resume-guard block (floor 60k, $3/M) · handoff on (/data/handoffs) · recent: blocked a resume of researcher (~187k tokens) 1m ago; raised the agents to 1h for lead (waiting) 2m ago
+```
+
+| Segment | When |
+| --- | --- |
+| `agent-raise off` | neither `agentRaiseWaiting` nor `agentRaiseAfterExpiries` is set |
+| `agent-raise ready (waiting, after 2 expiries)` | on, nothing held |
+| `agent-raise holding agents at 1h for a, b (since 4m ago)` | holders alive; the variable is `1h`, credited `agent auto-raise (shared 1h)` |
+| `agent-raise idle: agents is 1h` | the agents are already at 1h |
+| `agent-raise off: /cache agents 5m was typed this session` | the session switched it off |
+| `agent-raise inactive: FORCE_PROMPT_CACHING_5M is set` | Claude Code would ignore a 1h |
+| `agent-raise failed, the TTL may be unchanged: …` | the write, the hand-back or a read failed |
+| `resume-guard off` / `warn (floor 60k)` / `block (floor 60k, $3/M)` | the guard's mode, floor and price |
+| `handoff off` / `on (<dir>)` / `on, no directory: set handoffDir` | the handoff option |
+| `recent: …` | the last events: `blocked a resume of X (~187k tokens)`, `warned about a resume of X …`, `resumed X anyway`, `could not check a resume of X: …`, `raised the agents to 1h for X (waiting)`, `handed the agents variable back (5m)` |
+
+A bad value of any of these options is ignored, named by `/cache`, and leaves
+the piece off.
+
+### Limits
+
+- The shared raise bills every sub-agent's writes at 2× while it holds; that
+  is why it is opt-in. The race above is measured on one Claude Code release
+  and not re-measured since.
+- An agent whose frontmatter sets its own TTL is invisible to the plugin: it
+  records the variable's value, so such an agent is assumed to run at the
+  agents' TTL (5m when automatic) and the guard may call it cold early.
+- `warn` puts its text in the tool result's `context`; it is proven by the
+  hook tests and not on a live Claude Code (the live proof covers the block, the
+  override and a warm target).
+- The context a record keeps is the agent's latest response, not a count of
+  what a resume would send; a resume adds the new message to it.
+- Records, holders and events live in memory: a plugin reload forgets them,
+  and a raise that was holding then leaves the variable at 1h until you
+  `/cache agents auto` it.
+
 ## 🧩 Launchers
 
 A program that starts Claude Code (Professor's `pfm` does; any launcher
@@ -366,6 +576,7 @@ other source, and `/cache` warns you about it on every line.
 ```sh
 npm install
 npm test              # unit tests (vitest), function-hook tests (claude plugin test) and the option variants (scripts/test-hook-variants.sh)
+scripts/test-hook-variants.sh guard-block   # one option variant (hook-tests/<name>/): the kit cannot pass options, so each runs on a copy of the plugin with its defaults set
 npm run typecheck
 npm run validate:plugin
 npm run live          # live proof in tmux, spends a few cents of Haiku
@@ -380,14 +591,19 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | Module | Role |
 | --- | --- |
 | `ttl.ts` | The TTL values, the two parties and their variables |
-| `parse.ts` | `/cache` words, in any order, to an action |
+| `parse.ts` | `/cache` words, in any order, to an action: TTL groups and the settings words |
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
-| `options.ts` | The `mainTtl` / `subagentTtl` / `ttlNotice` / `raiseAfterExpiries` options, read and checked |
+| `options.ts` | Every option (`mainTtl`, `subagentTtl`, `ttlNotice`, `raiseAfterExpiries`, the guard, the agents' raise and the handoff), read and checked |
 | `notice.ts` | The `ttlNotice` note: the main TTL it names, its text, and which compaction takes it out |
 | `handoff.ts` | Session start: a launch variable, a launcher's handoff variable, then the option, per party |
 | `warmth.ts` | Each party's latest request, whether its cache is warm, and the warning a switch of a warm cache prints |
 | `raise.ts` | The auto-raise: the expired-wake count, when it fires, what a `/cache` command, a compaction and a `/clear` do to it, and the status segment |
 | `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |
+| `agents.ts` | The per-agent records: latest request, TTL, context, expired count, spawn; their bounds |
+| `guard.ts` | The cold-resume guard: the target, the override marker, the verdict and its text, the TTL a resume writes at |
+| `agentraise.ts` | The agents' shared raise: holders, what the variable held before, when to write and hand back, the status segment |
+| `agenthandoff.ts` | The handoff instruction, the file named by the spawn call, the default directory |
+| `events.ts` | The short log `/cache` shows beside the protection pieces |
 
 ## 🎓 Built with Professor
 
