@@ -4,7 +4,7 @@ import { launchChange } from '../src/launch.ts';
 import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
 import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs } from '../src/parse.ts';
-import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, type RaiseState } from '../src/raise.ts';
+import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, type FailureKind, type RaiseState } from '../src/raise.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
 import type { Change, Party, Ttl } from '../src/ttl.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
@@ -33,6 +33,15 @@ type State = {
    * the turn ends, so a warm switch then also shows its warning as a toast.
    */
   mainTurnRunning: boolean;
+  /**
+   * prompt.submit reached a verdict on the wake that the next turn.start begins,
+   * with main's latest request then at `at`: it is final, so the note built on
+   * it and the request cannot disagree. A request since, or the prompt not
+   * entering, voids it.
+   */
+  submitted?: { at: number | undefined };
+  /** `/cache` commands that changed main: one typed while the raise writes takes precedence over it. */
+  mainTyped: number;
   /**
    * The main TTL the TTL notice last told the main chat (option ttlNotice);
    * absent when its context holds none: never told, compacted or cleared.
@@ -145,28 +154,48 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
  * cache for the Nth time, main goes to 1h before that request leaves (option
  * raiseAfterExpiries). One wake counts once, so prompt.submit and turn.start
  * may both ask. A failure is shown by `/cache` and never holds the turn.
+ * False when a read failed, so no verdict was reached and turn.start may ask again.
  */
-async function weighWake(st: State, $: EngineInterface): Promise<void> {
-  if (st.raise.after === undefined || st.raise.locked || st.raise.firedAt !== undefined) return;
+async function weighWake(st: State, $: EngineInterface): Promise<boolean> {
+  if (st.raise.after === undefined || st.raise.locked || st.raise.firedAt !== undefined) return true;
+  let now: number;
+  let weighed: ReturnType<typeof onWake>;
   try {
-    const now = await $.clock.now();
-    const weighed = onWake(st.raise, { record: st.records.main, now, env: await readEnv($), ours: st.ours });
-    st.raise = weighed.state;
-    if (!weighed.raise) return;
-    await writeParty($, 'main', '1h');
-    st.ours.main = { value: '1h', via: 'raise' };
-    st.raise = markFired(st.raise, now);
+    now = await $.clock.now();
+    const env = await readEnv($);
+    // The state is read after the awaits and replaced at once: nothing else runs between.
+    weighed = onWake(st.raise, { record: st.records.main, now, env, ours: st.ours });
   } catch (error) {
-    st.raise = markFailed(st.raise, message(error));
-    $.ui.log(`cache-live-control: the auto-raise failed, the TTL may be unchanged: ${message(error)}`, { to: 'debug' });
+    st.raise = markFailed(st.raise, message(error), 'read');
+    $.ui.log(`cache-live-control: weighing the wake for the auto-raise failed: ${message(error)}`, { to: 'debug' });
+    return false;
   }
+  st.raise = weighed.state;
+  if (!weighed.raise) return true;
+  const typed = st.mainTyped;
+  try {
+    await writeParty($, 'main', '1h');
+  } catch (error) {
+    // A `/cache main` typed meanwhile has answered since: its word stands.
+    if (st.mainTyped === typed) st.raise = markFailed(st.raise, message(error));
+    $.ui.log(`cache-live-control: the auto-raise failed, the TTL may be unchanged: ${message(error)}`, { to: 'debug' });
+    return true;
+  }
+  // Only a typed `/cache main` outranks the raise; a restart or a failure landing meanwhile leaves the 1h it wrote its own.
+  if (st.mainTyped !== typed) return true;
+  st.ours.main = { value: '1h', via: 'raise' };
+  st.raise = markFired(st.raise, now);
+  return true;
 }
 
 /** A compaction or a new session: the requests before it are another prefix, no expiry. */
-async function restartRaise(st: State, $: EngineInterface, restart: typeof onBoundary): Promise<void> {
+async function restartRaise(st: State, $: EngineInterface, restart: typeof onBoundary, kind: FailureKind): Promise<void> {
   try {
-    st.raise = restart(st.raise, await $.clock.now());
+    // The state is read after the await, so a change made meanwhile stands.
+    const now = await $.clock.now();
+    st.raise = restart(st.raise, now);
   } catch (error) {
+    st.raise = markFailed(st.raise, `restarting the count failed: ${message(error)}`, kind);
     $.ui.log(`cache-live-control: restarting the auto-raise count failed: ${message(error)}`, { to: 'debug' });
   }
 }
@@ -203,6 +232,7 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
     } finally {
       // The user's explicit word on main wins, whether or not every write landed.
       st.raise = onCommand(st.raise, action.change);
+      if (action.change.main !== undefined) st.mainTyped += 1;
     }
     const state = formatState(await readEnv($), st.ours);
     if (warm.length > 0 && st.mainTurnRunning) toastWarm($, `${warmNote(warm)} — now ${state}`);
@@ -223,6 +253,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     optionsApplied: false,
     launch1h: false,
     mainTurnRunning: false,
+    mainTyped: 0,
   };
 
   on('session.start', async ($, e, next) => {
@@ -241,7 +272,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       if ((e as { agentId?: string }).agentId === undefined) {
         st.mainTurnRunning = true;
-        await weighWake(st, $);
+        const submitted = st.submitted;
+        delete st.submitted;
+        if (submitted === undefined || submitted.at !== st.records.main?.at) await weighWake(st, $);
       }
     } catch (error) {
       $.ui.log(`cache-live-control: noting a turn start failed: ${message(error)}`, { to: 'debug' });
@@ -278,18 +311,27 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // the one last told. prompt.submit is the main chat's alone: a sub-agent's
   // prompt goes through agent.spawn, and the input carries no agentId.
   on('prompt.submit', async ($, e, next) => {
-    if (e.turnId === undefined) await weighWake(st, $);
-    if (st.options.notice !== true) return next(e);
-    let n: Ttl | null;
-    try {
-      n = noticeTtl(await readEnv($), st.ours);
-    } catch (error) {
-      $.ui.log(`cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, { to: 'debug' });
-      return next(e);
+    let stamp: State['submitted'];
+    if (e.turnId === undefined && (await weighWake(st, $))) {
+      stamp = { at: st.records.main?.at };
+      st.submitted = stamp;
     }
-    if (n === null || n === st.noticed) return next(e);
-    const result = await next({ ...e, context: [...(e.context ?? []), noticeText(n)] });
-    if (result.drop === undefined) st.noticed = n;
+    let n: Ttl | null = null;
+    if (st.options.notice === true) {
+      try {
+        n = noticeTtl(await readEnv($), st.ours);
+      } catch (error) {
+        $.ui.log(`cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, { to: 'debug' });
+      }
+    }
+    if (n === st.noticed) n = null;
+    const result = await next(n === null ? e : { ...e, context: [...(e.context ?? []), noticeText(n)] });
+    if (result.drop === undefined) {
+      if (n !== null) st.noticed = n;
+    } else if (stamp !== undefined && st.submitted === stamp) {
+      // The prompt did not enter, so it starts no turn: its verdict spares none.
+      delete st.submitted;
+    }
     return result;
   });
 
@@ -300,7 +342,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     if (forgetsNotice(e, result)) {
       delete st.noticed;
       // A precompute installs nothing: the prefix, and its expiry, stand.
-      if (e.trigger !== 'precompute') await restartRaise(st, $, onBoundary);
+      if (e.trigger !== 'precompute') await restartRaise(st, $, onBoundary, 'compact');
     }
     return result;
   });
@@ -310,7 +352,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // auto-raise counts its session over.
   on('session.end', async ($, e, next) => {
     delete st.noticed;
-    await restartRaise(st, $, onSessionEnd);
+    await restartRaise(st, $, onSessionEnd, 'end');
     return next(e);
   });
 };

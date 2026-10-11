@@ -1,5 +1,5 @@
 import type { On } from 'claude-code';
-import { mock, type Engine } from 'claude-code/testing';
+import type { Engine } from 'claude-code/testing';
 
 // The world beneath the plugin for the variant hook tests (scripts/test-hook-variants.sh):
 // an in-memory environment, a clock that moves only when the test moves it, and
@@ -13,7 +13,24 @@ export type World = ReturnType<typeof world>;
 
 export function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
-  const clock = mock.clock(on, { now: 1_000_000_000_000 });
+  /** The clock moves only when the test moves it; `fails` makes a read of it throw; `during` runs once inside the next read. */
+  let now = 1_000_000_000_000;
+  const clock: { fails: boolean; during?: () => Promise<void>; advance: (ms: number) => Promise<void> } = {
+    fails: false,
+    advance: async (ms: number) => {
+      now += ms;
+    },
+  };
+  on('clock.now', async () => {
+    if (clock.fails) throw new Error('clock refused');
+    const read = now;
+    const act = clock.during;
+    delete clock.during;
+    if (act !== undefined) await act();
+    return { value: read } as never;
+  });
+  /** `reads.fails` makes every env.get throw; `during.set` runs once inside the next env.set, (the test's own engine call). */
+  const reads = { fails: false };
   /** Every env.set that reached the bottom, in order. */
   const sets: { name: string; value: string | undefined }[] = [];
   /** The env names whose set is refused. */
@@ -33,19 +50,32 @@ export function world(on: On, initial: Record<string, string> = {}) {
   });
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }));
   on('turn.complete', async (_$, e) => ({ text: e.answer }));
+  /** `prompts.drop` makes the next prompt not enter, as a settings hook's block beneath would. */
+  const prompts = { drop: false };
   on('prompt.submit', async (_$, e) => {
+    if (prompts.drop) {
+      prompts.drop = false;
+      return { drop: 'blocked by a settings hook' };
+    }
     promptsSaw.push(env.get(MAIN));
     contexts.push(e.context);
     return { text: e.text, context: e.context };
   });
   on('session.compact', async (_$, e) => ({ messages: e.messages }));
   on('session.end', async (_$, e) => ({ sessionId: e.sessionId }) as never);
-  on('env.get', async (_$, e) => ({ value: env.get(e.name) }));
+  on('env.get', async (_$, e) => {
+    if (reads.fails) throw new Error('env read refused');
+    return { value: env.get(e.name) };
+  });
+  const during: { set?: () => Promise<void> } = {};
   on('env.set', async (_$, e) => {
     if (refused.has(e.name)) throw new Error('env refused');
     sets.push({ name: e.name, value: e.value });
     if (e.value === undefined) env.delete(e.name);
     else env.set(e.name, e.value);
+    const act = during.set;
+    delete during.set;
+    if (act !== undefined) await act();
     return { value: undefined };
   });
   on('command.register', async (_$, e) => ({ value: { command: e.name } }));
@@ -72,7 +102,7 @@ export function world(on: On, initial: Record<string, string> = {}) {
     await $.turn.complete({ turnId, answer: 'ok', durationMs: 1, isAborted: false, reason: 'answer' } as never);
   }
 
-  return { env, clock, sets, refused, requests, promptsSaw, contexts, logs, typed, turn };
+  return { env, clock, reads, during, prompts, sets, refused, requests, promptsSaw, contexts, logs, typed, turn };
 }
 
 export const START = { cwd: '.', surface: null, isInteractive: true } as const;

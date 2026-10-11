@@ -7,7 +7,7 @@
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-0.3.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
@@ -248,9 +248,25 @@ raises writes its cache at 1h at once: the first expired wake of `2` writes at
   expired wake tries again.
 - Limits: a request in the middle of a turn after a tool wait of more than 5
   minutes is not a wake (a turn starting is), so it is not counted; a plugin
-  reload resets the count and the raise; a wake that is a few milliseconds short of
-  5 minutes old when its prompt is submitted and past it when its turn starts is
-  judged at the turn start, so its note may name 5m while the request goes out at 1h.
+  reload resets the count and the raise.
+- A wake that has a prompt is weighed once, when the prompt is submitted, and that
+  verdict is final for the turn the prompt starts: the note and the request cannot
+  disagree, even when the 5 minutes run out between the prompt and its turn. A
+  prompt whose weighing could not read the clock or the environment, or that did
+  not enter (a hook blocked it), decides nothing: the next turn is weighed when it
+  starts.
+- A failure shows in `/cache` until what failed works again: a failed write, or a
+  failed read of the clock or the environment, as `failed, the TTL may be
+  unchanged`; a failed restart of the count after a compaction or `/clear` as
+  `failed` alone, since it never touches the TTL. One failure, or its recovery,
+  never hides another. Once the raise fired or `/cache main 5m` switched it off, a
+  failed count restart changes nothing, so `/cache` does not show it.
+- Not proven on a live Claude Code: a `/cache main …`, a compaction or a `/clear`
+  in the very moment the raise writes 1h. The plugin keeps a typed word (the raise
+  then claims nothing, and `/cache` names the typed one); a compaction or `/clear`
+  leaves the 1h the raise's, and fired. The hook tests prove both by running the
+  event inside the write; whether Claude Code ever runs it at that point, and in
+  which order two writes land, is not shown.
 
 `/cache` names the auto-raise after the TTLs:
 
@@ -262,7 +278,8 @@ raises writes its cache at 1h at once: the first expired wake of `2` writes at
 | `auto-raise idle: main is 1h` | main is not at 5m, so nothing is counted |
 | `auto-raise off: /cache main 5m was typed this session` | the session switched it off |
 | `auto-raise inactive: FORCE_PROMPT_CACHING_5M is set` | Claude Code would ignore a 1h |
-| `auto-raise failed, the TTL may be unchanged: …` | the write failed |
+| `auto-raise failed, the TTL may be unchanged: …` | the write or a read failed (a failed count restart is named after it) |
+| `auto-raise failed: restarting the count failed: …` | only the count's restart after a compaction or `/clear` failed |
 
 A bad value (`abc`, `0`, `1.5`) is ignored and named by `/cache`
 (`option raiseAfterExpiries "abc" ignored: use a whole number of 1 or more, or empty`).

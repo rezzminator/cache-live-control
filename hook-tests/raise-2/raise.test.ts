@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing';
+import { describe, expect, test, type Engine } from 'claude-code/testing';
 import { AGENTS, cache, MAIN, MIN, raiseLine, START, world } from '../world.ts';
 
 // Run by scripts/test-hook-variants.sh with the manifest defaults mainTtl=5m,
@@ -308,4 +308,151 @@ describe('review findings', () => {
     expect(w.env.get(MAIN)).toBe('1h');
     expect(await raiseLine($)).toBe('auto-raise fired 1m ago');
   });
+
+  test('R3 prompt.submit 1ms before the expiry, turn.start 2ms after: the prompt.submit verdict is final, the request goes out at the TTL the note was built on', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    await w.clock.advance(5 * MIN - 1);
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } });
+    await w.clock.advance(2);
+    await w.turn($, 'go');
+    expect(w.requests).toEqual(['5m', '5m', '5m']);
+    expect(w.contexts[2]).toBeUndefined();
+    expect(await raiseLine($)).toBe('auto-raise counting 1 of 2 expiries');
+  });
+
+  test('R6 a failed read shows in /cache, and the next wake whose read succeeds takes it away', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    w.reads.fails = true;
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } });
+    await $.turn.start({ text: 'go', turnId: 'unread' });
+    w.reads.fails = false;
+    expect(await raiseLine($)).toMatch(/^auto-raise failed, the TTL may be unchanged: .*env\.get/);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    expect(await raiseLine($)).toBe('auto-raise counting 1 of 2 expiries');
+  });
+
+  test('R7 a compaction whose count restart failed shows in /cache, and the next restart that works takes it away', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    w.clock.fails = true;
+    await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never);
+    w.clock.fails = false;
+    expect(await raiseLine($)).toMatch(/^auto-raise failed: restarting the count failed: .*clock\.now/);
+    await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never);
+    expect(await raiseLine($)).toBe('auto-raise counting 0 of 2 expiries');
+  });
+
+  test('R5 a /cache main 5m typed while the raise writes 1h wins: main ends at 5m and /cache never claims the raise', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    w.during.set = async () => {
+      await cache($, 'main 5m');
+    };
+    await w.typed($);
+    expect(w.env.get(MAIN)).toBe('5m');
+    expect(await raiseLine($)).toBe('auto-raise off: /cache main 5m was typed this session');
+    expect(await cache($)).toMatch(/^main 5m \(/);
+  });
+
+  test('G4 a prompt.submit whose read failed reached no verdict: turn.start weighs the wake, and it counts', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    w.reads.fails = true;
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } });
+    w.reads.fails = false;
+    await w.turn($, 'go');
+    expect(await raiseLine($)).toBe('auto-raise counting 1 of 2 expiries');
+  });
+
+  test('G3 a prompt that did not enter spares no later turn: a self-inject after it is weighed, and raises', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    await w.clock.advance(4 * MIN);
+    w.prompts.drop = true;
+    await $.prompt.submit({ text: 'blocked', wait: false, origin: { kind: 'composer' } });
+    await w.clock.advance(3 * MIN);
+    await w.turn($);
+    expect(w.requests).toEqual(['5m', '5m', '1h']);
+    expect(await raiseLine($)).toBe('auto-raise fired just now');
+  });
+
+  test('G2 a count restart that fails after the raise fired leaves /cache saying it fired', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    w.clock.fails = true;
+    await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never);
+    w.clock.fails = false;
+    expect(await raiseLine($)).toBe('auto-raise fired just now');
+  });
+
+  for (const [what, act] of [
+    ['a compaction', ($: Engine) => $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never)],
+    ['a /clear', ($: Engine) => $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never)],
+  ] as const) {
+    test(`G5 ${what} landing while the raise writes 1h leaves the 1h the raise's, and fired`, async ($, on) => {
+      const w = world(on);
+      await $.session.start(START);
+      await w.typed($);
+      await w.clock.advance(6 * MIN);
+      await w.typed($);
+      await w.clock.advance(6 * MIN);
+      w.during.set = async () => {
+        await act($);
+      };
+      await w.typed($);
+      expect(w.env.get(MAIN)).toBe('1h');
+      expect(await raiseLine($)).toBe('auto-raise fired just now');
+      expect(await cache($)).toMatch(/^main 1h \(auto-raise, option raiseAfterExpiries/);
+    });
+  }
+
+  test('G6 a /cache main 5m typed while a /clear reads the clock stands: the restart keeps the lock', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    w.clock.during = async () => {
+      await cache($, 'main 5m');
+    };
+    await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+    expect(await raiseLine($)).toBe('auto-raise off: /cache main 5m was typed this session');
+  });
+
+  test('G7 a main request between the prompt and its turn voids the prompt verdict: the turn is weighed on the newer request', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await w.typed($);
+    await w.clock.advance(6 * MIN);
+    await w.typed($);
+    await w.clock.advance(4 * MIN);
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } });
+    const stream = $.turn.step({ turnId: 'between', index: 0, model: 'haiku', messageCount: 1 } as never);
+    for (;;) if ((await stream.next()).done) break;
+    await w.clock.advance(6 * MIN);
+    await w.turn($, 'go');
+    expect(w.requests).toEqual(['5m', '5m', '5m', '1h']);
+  });
 });
+

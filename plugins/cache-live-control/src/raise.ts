@@ -21,9 +21,29 @@ export type RaiseState = {
   weighed?: number;
   /** A request at or before this time wrote another prefix (a compaction, another conversation): no expiry. */
   floor?: number;
-  /** The last raise write failed, and why: shown by `/cache`, retried at the next expired wake. */
-  failed?: string;
+  /**
+   * What failed, and why, one entry per kind: shown by `/cache` until that kind
+   * works again, so one kind's failure or recovery never hides another's.
+   */
+  failed?: Failures;
 };
+
+/**
+ * The raise's write (retried at the next expired wake), a read of the clock or
+ * the environment, the count's restart after a compaction, or after a `/clear`
+ * or a resume.
+ */
+export type FailureKind = 'write' | 'read' | 'compact' | 'end';
+export type Failures = Partial<Record<FailureKind, string>>;
+
+/** `state` without its failures of `kinds`; the others stand. */
+function clearFailure(state: RaiseState, ...kinds: FailureKind[]): RaiseState {
+  const { failed, ...rest } = state;
+  if (failed === undefined) return state;
+  const left: Failures = { ...failed };
+  for (const kind of kinds) delete left[kind];
+  return Object.keys(left).length === 0 ? rest : { ...rest, failed: left };
+}
 
 /** What the adapter knows when a main turn is about to send its first request. */
 export type Wake = { record: StepRecord | undefined; now: number; env: EnvSnapshot; ours: Ours };
@@ -33,7 +53,9 @@ export function newRaise(after?: number): RaiseState {
 }
 
 /** Counts this wake when it is an expired one; `raise` is true when it is the Nth. */
-export function onWake(state: RaiseState, wake: Wake): { state: RaiseState; raise: boolean } {
+export function onWake(before: RaiseState, wake: Wake): { state: RaiseState; raise: boolean } {
+  // The read that built `wake` worked: a failed read is over.
+  const state = clearFailure(before, 'read');
   const idle = { state, raise: false };
   if (state.after === undefined || state.locked || state.firedAt !== undefined) return idle;
   if (isForced5m(wake.env.force5m)) return idle;
@@ -52,9 +74,9 @@ export function markFired(state: RaiseState, now: number): RaiseState {
   return { ...rest, firedAt: now };
 }
 
-/** The raise's write failed: the count stays, so the next expired wake asks again. */
-export function markFailed(state: RaiseState, reason: string): RaiseState {
-  return { ...state, failed: reason };
+/** Something failed: the count stays, and after a failed write the next expired wake asks again. */
+export function markFailed(state: RaiseState, reason: string, kind: FailureKind = 'write'): RaiseState {
+  return { ...state, failed: { ...state.failed, [kind]: reason } };
 }
 
 /**
@@ -70,7 +92,7 @@ export function onCommand(state: RaiseState, change: Change): RaiseState {
 
 /** A compaction rewrote the prefix: the requests before it are no expiry to count. */
 export function onBoundary(state: RaiseState, now: number): RaiseState {
-  return { ...state, floor: now };
+  return { ...clearFailure(state, 'compact'), floor: now };
 }
 
 /**
@@ -88,13 +110,22 @@ function ago(ms: number): string {
   return minutes < 120 ? `${minutes}m ago` : `${Math.floor(minutes / 60)}h ago`;
 }
 
-/** The status segment `/cache` shows: off, counting k of N, fired when, or why it does not act. */
+/**
+ * The status segment `/cache` shows: off, counting k of N, fired when, failed
+ * why, or why it does not act. Once it fired or was switched off, a failure
+ * left (a count restart's) changes nothing it does, so it is not shown.
+ */
 export function raiseStatus(state: RaiseState, env: EnvSnapshot, ours: Ours, now: number): string {
   if (state.after === undefined) return 'auto-raise off';
   if (isForced5m(env.force5m)) return 'auto-raise inactive: FORCE_PROMPT_CACHING_5M is set';
-  if (state.failed !== undefined) return `auto-raise failed, the TTL may be unchanged: ${state.failed}`;
   if (state.firedAt !== undefined) return `auto-raise fired ${ago(Math.max(0, now - state.firedAt))}`;
   if (state.locked) return 'auto-raise off: /cache main 5m was typed this session';
+  const failed = state.failed ?? {};
+  const ttl = [failed.write, failed.read].filter((reason) => reason !== undefined);
+  const restart = [failed.compact, failed.end].filter((reason) => reason !== undefined);
+  if (ttl.length > 0) return `auto-raise failed, the TTL may be unchanged: ${[...ttl, ...restart].join('; ')}`;
+  // A count restart never touches the TTL: its failure claims no TTL doubt.
+  if (restart.length > 0) return `auto-raise failed: ${restart.join('; ')}`;
   const main = resolveParty('main', env, ours);
   if (main.ttl !== '5m') return `auto-raise idle: main is ${main.ttl}`;
   return `auto-raise counting ${state.count} of ${state.after} expiries`;

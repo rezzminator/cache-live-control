@@ -90,23 +90,59 @@ describe('onWake: which wake-ups count', () => {
 
   it('asks again at the next expiry after a failed write, keeping the count', () => {
     const failed = markFailed(wake(newRaise(1)).state, 'env refused');
-    expect(failed).toMatchObject({ count: 1, failed: 'env refused' });
+    expect(failed).toMatchObject({ count: 1, failed: { write: 'env refused' } });
     const next = wake(failed, { record: { at: NOW - 9 * MIN, ttl: '5m' } });
     expect(next.raise).toBe(true);
     expect(next.state.count).toBe(2);
   });
 });
 
+describe('a failure stands until what failed works again', () => {
+  const read = markFailed({ ...newRaise(2), count: 1 }, 'env read refused', 'read');
+  const compact = markFailed({ ...newRaise(2), count: 1 }, 'restarting the count failed: x', 'compact');
+  const end = markFailed({ ...newRaise(2), count: 1 }, 'restarting the count failed: y', 'end');
+
+  it('a wake whose read worked takes away a failed read, not a failed write or restart', () => {
+    expect(wake(read, { record: undefined }).state.failed).toBeUndefined();
+    expect(wake(markFailed(read, 'env refused'), { record: undefined }).state.failed).toEqual({ write: 'env refused' });
+    expect(wake(compact, { record: undefined }).state.failed).toEqual({ compact: 'restarting the count failed: x' });
+  });
+
+  it('a later failure of another kind, and its recovery, leave the earlier one standing', () => {
+    const write = markFailed({ ...newRaise(2), count: 2 }, 'env refused');
+    const both = markFailed(write, 'env read refused', 'read');
+    expect(both.failed).toEqual({ write: 'env refused', read: 'env read refused' });
+    expect(wake(both, { record: undefined }).state.failed).toEqual({ write: 'env refused' });
+    expect(wake(markFailed(compact, 'env read refused', 'read'), { record: undefined }).state.failed).toEqual({ compact: 'restarting the count failed: x' });
+  });
+
+  it('a compaction that worked takes away a failed compaction restart, not a failed read or session-end restart', () => {
+    expect(onBoundary(compact, NOW).failed).toBeUndefined();
+    expect(onBoundary(read, NOW).failed).toEqual({ read: 'env read refused' });
+    expect(onBoundary(end, NOW).failed).toEqual({ end: 'restarting the count failed: y' });
+  });
+
+  it('a session end that worked starts everything over, its failures with it', () => {
+    expect(onSessionEnd(end, NOW).failed).toBeUndefined();
+    expect(onSessionEnd(markFailed(compact, 'env refused'), NOW).failed).toBeUndefined();
+  });
+
+  it('a /cache main takes away any failure with the count', () => {
+    expect(onCommand(compact, { main: '1h' }).failed).toBeUndefined();
+    expect(onCommand(markFailed(read, 'env refused'), { main: '5m' }).failed).toBeUndefined();
+  });
+});
+
 describe('markFired, markFailed', () => {
   it('records when it fired and clears an earlier failure', () => {
-    const state = markFired(markFailed(newRaise(2), 'x'), NOW);
+    const state = markFired(markFailed(markFailed(newRaise(2), 'x'), 'y', 'read'), NOW);
     expect(state).toMatchObject({ firedAt: NOW });
     expect(state.failed).toBeUndefined();
   });
 
   it('records the failure and leaves the count and firedAt alone', () => {
     const state = markFailed({ ...newRaise(2), count: 1 }, 'env refused');
-    expect(state).toMatchObject({ count: 1, failed: 'env refused' });
+    expect(state).toMatchObject({ count: 1, failed: { write: 'env refused' } });
     expect(state.firedAt).toBeUndefined();
   });
 });
@@ -126,7 +162,7 @@ describe('onCommand: an explicit /cache main takes precedence', () => {
   });
 
   it('clears a fired raise and a failure, and a later non-5m command unlocks', () => {
-    const fired = { ...markFired(counting, NOW), locked: true, failed: 'x' };
+    const fired = { ...markFired(counting, NOW), locked: true, failed: { end: 'x' } };
     const back = onCommand(fired, { main: '1h' });
     expect(back.firedAt).toBeUndefined();
     expect(back.failed).toBeUndefined();
@@ -141,7 +177,7 @@ describe('onCommand: an explicit /cache main takes precedence', () => {
 });
 
 describe('onBoundary, onSessionEnd', () => {
-  const busy: RaiseState = { after: 2, count: 1, locked: true, firedAt: 5, weighed: 9, failed: 'x' };
+  const busy: RaiseState = { after: 2, count: 1, locked: true, firedAt: 5, weighed: 9, failed: { write: 'x' } };
 
   it('a compaction only moves the floor', () => {
     expect(onBoundary(busy, NOW)).toEqual({ ...busy, floor: NOW });
@@ -186,5 +222,17 @@ describe('raiseStatus', () => {
 
   it('prints the failed write in the existing style, and never claims it fired', () => {
     expect(at(markFailed({ ...newRaise(2), count: 2 }, 'env refused'))).toBe('auto-raise failed, the TTL may be unchanged: env refused');
+  });
+
+  it('names every failure left, and a count restart alone claims no TTL doubt', () => {
+    const write = markFailed({ ...newRaise(2), count: 2 }, 'env refused');
+    expect(at(markFailed(write, 'restarting the count failed: x', 'compact'))).toBe('auto-raise failed, the TTL may be unchanged: env refused; restarting the count failed: x');
+    expect(at(markFailed(newRaise(2), 'restarting the count failed: x', 'end'))).toBe('auto-raise failed: restarting the count failed: x');
+  });
+
+  it('a count restart that failed after it fired or was switched off hides neither', () => {
+    const late = (state: RaiseState) => markFailed(state, 'restarting the count failed: x', 'end');
+    expect(at(late(markFired(newRaise(2), NOW - 3 * MIN)), { main: '1h' })).toBe('auto-raise fired 3m ago');
+    expect(at(late({ ...newRaise(2), locked: true }))).toBe('auto-raise off: /cache main 5m was typed this session');
   });
 });
