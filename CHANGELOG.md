@@ -2,7 +2,7 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
-## [Unreleased]
+## [0.4.0] — 2026-10-11
 
 ### Added
 - `raiseAfterExpiries` option (a whole number of 1 or more; empty = off, the default): a main chat at 5m whose cache has expired at the start of its Nth turn (the previous main request was at 5m and is 5 minutes old or more) sends that turn's request at 1h and stays at 1h for the rest of the session. The sub-agents' variable is never touched; a main chat already at 1h, or `FORCE_PROMPT_CACHING_5M`, changes nothing. `/cache main …` resets the count and `/cache main 5m` switches the raise off for the session; `/clear` starts the count again but keeps a typed `/cache main 5m` and a fired raise. A bad value is ignored and named by `/cache`.
