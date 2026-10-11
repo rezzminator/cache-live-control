@@ -7,13 +7,13 @@
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-0.3.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
 
 ```text
-/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold)
+/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold) · auto-raise off
 /cache 1h agents      →  cache-live-control: main 1h · agents 1h
 /cache main 5m        →  cache-live-control: switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents 1h
 /cache auto main      →  cache-live-control: main automatic · agents 1h
@@ -180,6 +180,7 @@ ignores options under any other key.
 | `mainTtl` | empty | The main chat's TTL at session start: `5m`, `1h`, or empty to leave it automatic. |
 | `subagentTtl` | empty | The sub-agents' TTL at session start, the same way. |
 | `ttlNotice` | `false` | Tell the main chat's model which TTL it runs on, and how to delegate on it (below). |
+| `raiseAfterExpiries` | empty (off) | A whole number of 1 or more: on a main chat at 5m, the Nth wake-up to an expired cache goes out at 1h, and main stays 1h (below). |
 
 An option applies once, when the session starts, and never over a variable
 already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h)
@@ -201,12 +202,77 @@ An automatic main chat is assumed 1h, the subscription default (an API-key
 plan runs 5m); `FORCE_PROMPT_CACHING_5M` makes it 5m;
 a main variable Claude Code does not take gets no note.
 
+With `raiseAfterExpiries` set, the note stays true: a wake that raises main to
+1h is weighed before the note is built, so the note on that same prompt names 1 hour,
+the TTL the request goes out at. A wake with no prompt of yours carries the note
+only when the wake passes through the prompt hook: a background task's or
+sub-agent's return does, and its note names the TTL the request goes out at. A
+wake the plugin itself injects (a self-inject by a hook or tool) fires no prompt
+hook, and no other hook can add context to it, so that turn gets no note; the raise
+still happens, and the next prompt you type carries the 1h note.
+
+### Auto-raise
+
+`raiseAfterExpiries` (off by default; the author runs it at `2`) turns a 5m
+chat into a 1h chat once it has shown that it sleeps past its cache. An
+**expired wake** is a main chat turn that starts when main's previous request
+went out at 5m and is now 5 minutes old or more: the cache that request wrote is
+gone, and the new turn pays to write the whole context again. The plugin counts
+them per session; when the count reaches the option's value, that turn's
+request goes out at 1h (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h`, set before the request
+is sent), and main stays at 1h for the rest of the session. The wake that
+raises writes its cache at 1h at once: the first expired wake of `2` writes at
+5m, the second writes at 1h.
+
+- Only the main chat: the sub-agents' variable is never touched, and sub-agent
+  requests are never counted.
+- A main chat already at 1h, or automatic (assumed 1h), counts nothing and
+  changes nothing. With `FORCE_PROMPT_CACHING_5M` set, Claude Code takes no
+  1h, so the plugin does nothing and `/cache` says so.
+- It raises a 5m main whatever set it: the option `mainTtl`, a variable set
+  at launch, a launcher's handoff or another plugin. Only `/cache main 5m`
+  typed in the session keeps a 5m from it.
+- A wake is a turn that starts from an idle chat: a prompt you type, a
+  background task's or sub-agent's return, a self-inject. A prompt queued into a
+  turn that is already running is no wake.
+- An explicit `/cache` that sets main (`/cache main …`, `/cache 1h`, …)
+  resets the count. `/cache main 5m` (or `/cache 5m`) also switches the
+  auto-raise off for the rest of the session: it never overrides what you typed. A
+  `/cache` that sets only the agents leaves the count alone.
+- `/clear` and a resumed session start the count again, but the variable outlives
+  them: a typed `/cache main 5m` still keeps the raise off, and a raise that fired
+  stands. A compaction or a `/clear` does not count the first wake after it: its request carries
+  a new prefix, so its cache miss is not an expiry.
+- If the write to the 1h variable fails, `/cache` says `failed, the TTL may be
+  unchanged`, the request goes out at whatever the variable held, and the next
+  expired wake tries again.
+- Limits: a request in the middle of a turn after a tool wait of more than 5
+  minutes is not a wake (a turn starting is), so it is not counted; a plugin
+  reload resets the count and the raise; a wake that is a few milliseconds short of
+  5 minutes old when its prompt is submitted and past it when its turn starts is
+  judged at the turn start, so its note may name 5m while the request goes out at 1h.
+
+`/cache` names the auto-raise after the TTLs:
+
+| Segment | When |
+| --- | --- |
+| `auto-raise off` | `raiseAfterExpiries` is empty |
+| `auto-raise counting 1 of 2 expiries` | main is at 5m and has seen 1 of 2 |
+| `auto-raise fired 3m ago` | the raise ran; main is 1h (credited `auto-raise, option raiseAfterExpiries`) |
+| `auto-raise idle: main is 1h` | main is not at 5m, so nothing is counted |
+| `auto-raise off: /cache main 5m was typed this session` | the session switched it off |
+| `auto-raise inactive: FORCE_PROMPT_CACHING_5M is set` | Claude Code would ignore a 1h |
+| `auto-raise failed, the TTL may be unchanged: …` | the write failed |
+
+A bad value (`abc`, `0`, `1.5`) is ignored and named by `/cache`
+(`option raiseAfterExpiries "abc" ignored: use a whole number of 1 or more, or empty`).
+
 ```json
 {
   "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
   "pluginConfigs": {
     "cache-live-control@cache-live-control": {
-      "options": { "mainTtl": "1h", "subagentTtl": "5m" }
+      "options": { "mainTtl": "5m", "subagentTtl": "5m", "raiseAfterExpiries": "2" }
     }
   }
 }
@@ -282,7 +348,7 @@ other source, and `/cache` warns you about it on every line.
 
 ```sh
 npm install
-npm test              # unit tests (vitest) and function-hook tests (claude plugin test)
+npm test              # unit tests (vitest), function-hook tests (claude plugin test) and the option variants (scripts/test-hook-variants.sh)
 npm run typecheck
 npm run validate:plugin
 npm run live          # live proof in tmux, spends a few cents of Haiku
@@ -299,10 +365,11 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | `ttl.ts` | The TTL values, the two parties and their variables |
 | `parse.ts` | `/cache` words, in any order, to an action |
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
-| `options.ts` | The `mainTtl` / `subagentTtl` / `ttlNotice` options, read and checked |
+| `options.ts` | The `mainTtl` / `subagentTtl` / `ttlNotice` / `raiseAfterExpiries` options, read and checked |
 | `notice.ts` | The `ttlNotice` note: the main TTL it names, its text, and which compaction takes it out |
 | `handoff.ts` | Session start: a launch variable, a launcher's handoff variable, then the option, per party |
 | `warmth.ts` | Each party's latest request, whether its cache is warm, and the warning a switch of a warm cache prints |
+| `raise.ts` | The auto-raise: the expired-wake count, when it fires, what a `/cache` command, a compaction and a `/clear` do to it, and the status segment |
 | `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |
 
 ## 🎓 Built with Professor

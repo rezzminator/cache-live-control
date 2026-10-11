@@ -24,6 +24,10 @@ describe('resolveParty', () => {
     });
   });
 
+  it('credits the auto-raise to its option', () => {
+    expect(resolveParty('main', { main: '1h' }, { main: { value: '1h', via: 'raise' } })).toEqual({ ttl: '1h', source: 'auto-raise, option raiseAfterExpiries' });
+  });
+
   it('credits a launcher handoff as set at launch', () => {
     expect(resolveParty('main', { main: '1h' }, { main: { value: '1h', via: 'handoff' } })).toEqual({ ttl: '1h', source: 'set at launch' });
   });
@@ -80,6 +84,15 @@ describe('formatStatus', () => {
     expect(
       formatStatus({ main: '1h' }, { main: { value: '1h', via: 'handoff' } }, [], { records: { main: { at: now - 19 * 60_000, ttl: '1h' } }, now }),
     ).toBe(`main 1h (set at launch, warm 41m) · agents automatic (${AGENTS_AUTO}, cold)`);
+  });
+
+  it('names the auto-raise after the parties, before the warning and the ignored options', () => {
+    expect(formatStatus({ main: '5m' }, { main: { value: '5m', via: 'option' } }, [], undefined, 'auto-raise counting 1 of 2 expiries')).toBe(
+      `main 5m (option mainTtl) · agents automatic (${AGENTS_AUTO}) · auto-raise counting 1 of 2 expiries`,
+    );
+    expect(formatStatus({ force5m: '1' }, NONE, ['option raiseAfterExpiries "x" ignored: y'], undefined, 'auto-raise off')).toMatch(
+      / · auto-raise off · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m · option raiseAfterExpiries "x" ignored: y$/,
+    );
   });
 
   it('carries the ignored options', () => {

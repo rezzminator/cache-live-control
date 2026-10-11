@@ -2,7 +2,8 @@ import { isTtl, PARTIES, type Party, type Ttl } from './ttl.ts';
 
 // The plugin's `userConfig`: a starting TTL per party, applied at session start
 // unless a variable or a launcher's handoff (handoff.ts) comes first, and the
-// opt-in TTL notice to the main chat (notice.ts).
+// opt-in TTL notice to the main chat (notice.ts), and the auto-raise to 1h
+// after N expired wake-ups (raise.ts).
 
 export const OPTION: Readonly<Record<Party, string>> = { main: 'mainTtl', agents: 'subagentTtl' };
 
@@ -11,6 +12,8 @@ export type ResolvedOptions = {
   agents?: Ttl;
   /** ttlNotice: tell the main chat its cache TTL; absent when off. */
   notice?: true;
+  /** raiseAfterExpiries: expired wake-ups before main goes to 1h; absent when off. */
+  raiseAfter?: number;
   /** One line per option that was ignored, naming it and its value. */
   errors: string[];
 };
@@ -31,6 +34,13 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>): Reso
   if (flag === true || flag === 'true') out.notice = true;
   else if (flag !== false && flag !== 'false' && flag !== '' && flag !== undefined) {
     out.errors.push(`option ttlNotice ${JSON.stringify(notice)} ignored: use true or false`);
+  }
+  const raise = options['raiseAfterExpiries'];
+  const count = typeof raise === 'string' ? raise.trim() : raise;
+  if (count !== undefined && count !== '') {
+    const n = typeof count === 'string' && /^[0-9]+$/.test(count) ? Number(count) : count;
+    if (typeof n === 'number' && Number.isSafeInteger(n) && n >= 1) out.raiseAfter = n;
+    else out.errors.push(`option raiseAfterExpiries ${JSON.stringify(raise)} ignored: use a whole number of 1 or more, or empty`);
   }
   return out;
 }

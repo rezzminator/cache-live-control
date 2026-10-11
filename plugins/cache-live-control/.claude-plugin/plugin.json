@@ -28,6 +28,12 @@
       "title": "Tell the main chat its cache TTL",
       "description": "On: the main chat's first prompt, and the first prompt after its TTL changes or the chat compacts or clears, carries a short note to the model: which TTL it runs on, and whether to delegate long work to sub-agents (1h) or keep work in the chat (5m). Sub-agents never get it.",
       "default": false
+    },
+    "raiseAfterExpiries": {
+      "type": "string",
+      "title": "Main chat: raise to 1h after N expired wake-ups",
+      "description": "A whole number of 1 or more, or empty to leave it off. When the main chat runs at 5m and wakes to an expired cache for the Nth time in a session, that wake's request goes out at 1h and the main chat stays at 1h for the rest of the session. An explicit /cache main resets the count, and /cache main 5m switches the raise off for the session; FORCE_PROMPT_CACHING_5M and the sub-agents are never touched.",
+      "default": ""
     }
   }
 }

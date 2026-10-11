@@ -45,4 +45,30 @@ describe('resolveOptions', () => {
     expect(resolveOptions({ mainTtl: '5m', ttlNotice: 'yes' })).toEqual({ main: '5m', errors: ['option ttlNotice "yes" ignored: use true or false'] });
     expect(resolveOptions({ ttlNotice: 1 })).toEqual({ errors: ['option ttlNotice 1 ignored: use true or false'] });
   });
+
+  it('takes raiseAfterExpiries as a whole number of 1 or more, as a string or a number', () => {
+    expect(resolveOptions({ raiseAfterExpiries: '2' })).toEqual({ raiseAfter: 2, errors: [] });
+    expect(resolveOptions({ raiseAfterExpiries: ' 12 ' })).toEqual({ raiseAfter: 12, errors: [] });
+    expect(resolveOptions({ raiseAfterExpiries: '02' })).toEqual({ raiseAfter: 2, errors: [] });
+    expect(resolveOptions({ raiseAfterExpiries: 3 })).toEqual({ raiseAfter: 3, errors: [] });
+  });
+
+  it('leaves the auto-raise off when raiseAfterExpiries is empty or missing', () => {
+    for (const raiseAfterExpiries of ['', '  ', undefined]) expect(resolveOptions({ raiseAfterExpiries })).toEqual({ errors: [] });
+  });
+
+  it('ignores any other raiseAfterExpiries, naming it and its value', () => {
+    const use = 'use a whole number of 1 or more, or empty';
+    for (const raw of ['0', '-1', '2.5', 'two', '1e3', '99999999999999999999', 0, 1.5, true]) {
+      expect(resolveOptions({ raiseAfterExpiries: raw })).toEqual({ errors: [`option raiseAfterExpiries ${JSON.stringify(raw)} ignored: ${use}`] });
+    }
+  });
+
+  it('keeps a good raiseAfterExpiries beside a bad TTL option', () => {
+    expect(resolveOptions({ mainTtl: '5m', subagentTtl: 'x', raiseAfterExpiries: '2' })).toEqual({
+      main: '5m',
+      raiseAfter: 2,
+      errors: ['option subagentTtl "x" ignored: use 5m, 1h or empty'],
+    });
+  });
 });

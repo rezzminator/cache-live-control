@@ -4,6 +4,7 @@ import { launchChange } from '../src/launch.ts';
 import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
 import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs } from '../src/parse.ts';
+import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, type RaiseState } from '../src/raise.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
 import type { Change, Party, Ttl } from '../src/ttl.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
@@ -37,6 +38,8 @@ type State = {
    * absent when its context holds none: never told, compacted or cleared.
    */
   noticed?: Ttl;
+  /** The auto-raise (option raiseAfterExpiries): its count, lock and whether it fired. */
+  raise: RaiseState;
 };
 
 function message(error: unknown): string {
@@ -137,8 +140,40 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   }
 }
 
+/**
+ * A main turn is about to send its first request: when it wakes an expired 5m
+ * cache for the Nth time, main goes to 1h before that request leaves (option
+ * raiseAfterExpiries). One wake counts once, so prompt.submit and turn.start
+ * may both ask. A failure is shown by `/cache` and never holds the turn.
+ */
+async function weighWake(st: State, $: EngineInterface): Promise<void> {
+  if (st.raise.after === undefined || st.raise.locked || st.raise.firedAt !== undefined) return;
+  try {
+    const now = await $.clock.now();
+    const weighed = onWake(st.raise, { record: st.records.main, now, env: await readEnv($), ours: st.ours });
+    st.raise = weighed.state;
+    if (!weighed.raise) return;
+    await writeParty($, 'main', '1h');
+    st.ours.main = { value: '1h', via: 'raise' };
+    st.raise = markFired(st.raise, now);
+  } catch (error) {
+    st.raise = markFailed(st.raise, message(error));
+    $.ui.log(`cache-live-control: the auto-raise failed, the TTL may be unchanged: ${message(error)}`, { to: 'debug' });
+  }
+}
+
+/** A compaction or a new session: the requests before it are another prefix, no expiry. */
+async function restartRaise(st: State, $: EngineInterface, restart: typeof onBoundary): Promise<void> {
+  try {
+    st.raise = restart(st.raise, await $.clock.now());
+  } catch (error) {
+    $.ui.log(`cache-live-control: restarting the auto-raise count failed: ${message(error)}`, { to: 'debug' });
+  }
+}
+
 /** A model request is about to go out: note when, and the TTL its party's variable holds. */
-async function recordStep(st: State, $: EngineInterface, party: Party, at: number): Promise<void> {
+async function recordStep(st: State, $: EngineInterface, party: Party): Promise<void> {
+  const at = await $.clock.now();
   const variable = party === 'main' ? await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL') : await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL');
   st.records[party] = { at, ttl: recordedTtl(variable) };
 }
@@ -156,11 +191,19 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
   const action = parseArgs(args);
   if (action.kind === 'error') return { text: action.message };
   try {
+    const now = await $.clock.now();
     if (action.kind === 'status') {
-      return { text: formatStatus(await readEnv($), st.ours, [...st.options.errors, ...st.errors], { records: st.records, now: Date.now() }) };
+      const env = await readEnv($);
+      const errors = [...st.options.errors, ...st.errors];
+      return { text: formatStatus(env, st.ours, errors, { records: st.records, now }, raiseStatus(st.raise, env, st.ours, now)) };
     }
-    const warm = warmChanges(action.change, await readEnv($), st.records, Date.now(), st.launch1h);
-    await apply(st, $, action.change, 'command');
+    const warm = warmChanges(action.change, await readEnv($), st.records, now, st.launch1h);
+    try {
+      await apply(st, $, action.change, 'command');
+    } finally {
+      // The user's explicit word on main wins, whether or not every write landed.
+      st.raise = onCommand(st.raise, action.change);
+    }
     const state = formatState(await readEnv($), st.ours);
     if (warm.length > 0 && st.mainTurnRunning) toastWarm($, `${warmNote(warm)} — now ${state}`);
     return { text: warm.length > 0 ? `switched; ${warmNote(warm)}: ${state}` : state };
@@ -170,8 +213,10 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
 }
 
 export const register: Register = (on: On, options: PluginOptions) => {
+  const resolved = resolveOptions(options as Record<string, unknown>);
   const st: State = {
-    options: resolveOptions(options as Record<string, unknown>),
+    options: resolved,
+    raise: newRaise(resolved.raiseAfter),
     errors: [],
     ours: {},
     records: {},
@@ -186,12 +231,18 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return result;
   });
 
-  // Observe only: whether a main-chat turn is running, for the warm-cache toast.
+  // Whether a main-chat turn is running, for the warm-cache toast, and the
+  // auto-raise's second look at the wake: a turn no prompt.submit hook saw (a
+  // plugin's own self-inject) still goes out at the raised TTL, because the
+  // variable is set before `next` and so before the turn's first request.
   // turn.start carries no agentId today; it is read in case a sub-agent's turn
   // ever carries one. turn.complete fires for aborted turns too.
   on('turn.start', async ($, e, next) => {
     try {
-      if ((e as { agentId?: string }).agentId === undefined) st.mainTurnRunning = true;
+      if ((e as { agentId?: string }).agentId === undefined) {
+        st.mainTurnRunning = true;
+        await weighWake(st, $);
+      }
     } catch (error) {
       $.ui.log(`cache-live-control: noting a turn start failed: ${message(error)}`, { to: 'debug' });
     }
@@ -210,7 +261,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // Observes only: the stream passes through untouched and is never held.
   on('turn.step', async function* ($, e, next) {
     const party: Party = e.agentId === undefined ? 'main' : 'agents';
-    recordStep(st, $, party, Date.now()).catch((error: unknown) => {
+    recordStep(st, $, party).catch((error: unknown) => {
       $.ui.log(`cache-live-control: noting a ${party} request for the warm-cache warning failed: ${message(error)}`, { to: 'debug' });
     });
     return yield* next(e);
@@ -218,10 +269,16 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   on('command.run', { command: COMMAND }, async ($, e) => runCommand(st, $, e.args));
 
+  // A prompt that wakes an idle session (any origin: typed, a background
+  // task's return, a scheduled trigger) is weighed for the auto-raise first, so
+  // the variable is final before the note below names it and before the
+  // request leaves. A prompt typed or delivered into a running turn
+  // (e.turnId set) starts no turn and is no wake.
   // Option ttlNotice: a prompt carries the note when the main TTL differs from
   // the one last told. prompt.submit is the main chat's alone: a sub-agent's
   // prompt goes through agent.spawn, and the input carries no agentId.
   on('prompt.submit', async ($, e, next) => {
+    if (e.turnId === undefined) await weighWake(st, $);
     if (st.options.notice !== true) return next(e);
     let n: Ttl | null;
     try {
@@ -236,17 +293,24 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return result;
   });
 
-  // A main-chat compaction takes the note out: the next prompt carries it again.
-  on('session.compact', async (_$, e, next) => {
+  // A main-chat compaction takes the note out: the next prompt carries it
+  // again. It also rewrites the prefix: the wake after it is no expiry.
+  on('session.compact', async ($, e, next) => {
     const result = await next(e);
-    if (forgetsNotice(e, result)) delete st.noticed;
+    if (forgetsNotice(e, result)) {
+      delete st.noticed;
+      // A precompute installs nothing: the prefix, and its expiry, stand.
+      if (e.trigger !== 'precompute') await restartRaise(st, $, onBoundary);
+    }
     return result;
   });
 
   // A /clear or a resume ends the conversation here (no session.start fires for
-  // the one that follows): the next one has not read the note.
-  on('session.end', async (_$, e, next) => {
+  // the one that follows): the next one has not read the note, and the
+  // auto-raise counts its session over.
+  on('session.end', async ($, e, next) => {
     delete st.noticed;
+    await restartRaise(st, $, onSessionEnd);
     return next(e);
   });
 };

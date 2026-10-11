@@ -17,6 +17,12 @@
 #           a screen that still shows the turn running (every polled screen is
 #           kept); the reply line shows too (Claude Code draws it once the turn
 #           ends); the turn finishes normally, and the next main request writes 5m
+#   (g)     a fourth session with mainTtl=5m, raiseAfterExpiries=2 and ttlNotice: the
+#           first turn writes 5m; after more than 5 idle minutes the 1st expired
+#           wake still writes 5m and /cache counts 1 of 2; after another idle
+#           5 minutes the 2nd expired wake's own request writes 1h, the note on
+#           that prompt names 1 hour, /cache says fired, and the next request
+#           stays 1h (two real waits of 5.5 minutes)
 #   premise the cost of a warm switch, recorded (INFO, not asserted): the cache
 #           read of the first request after each switch
 # The flips of (a) and (b) run on a warm cache, so they warn too; (a)'s
@@ -274,6 +280,38 @@ f_cmd_ts=$(jq -r 'select(.subtype=="local_command") | select(.content|contains("
 t11_ts=$(jq -r 'select(.type=="assistant") | select([.message.content[]? | select(.type=="text") | .text | contains("T11")] | any) | .timestamp' "$F3" | head -1)
 t11_ok=$(jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$F3" | grep -q 'T11' && ! grep -q 'Request interrupted' "$F3" && echo yes)
 
+# (g) The auto-raise: two expired wakes. A wait of 330s after an answer is past
+# the 5m cache and past the plugin's own 5m mark for that request.
+cat > "$RUN/settings-raise.json" <<'EOF2'
+{ "pluginConfigs": { "cache-live-control@inline": { "options": { "mainTtl": "5m", "raiseAfterExpiries": "2", "ttlNotice": true } } } }
+EOF2
+ID=$(uuidgen | tr 'A-Z' 'a-z')
+echo "auto-raise session: $ID (two waits of 330s)"
+start "$ID" "" "$RUN/settings-raise.json"
+turn "Reply with exactly: R1" R1
+log "waiting 330s (1st expired wake)"; sleep 330
+turn "Reply with exactly: R2" R2
+command_row "/cache"
+log "waiting 330s (2nd expired wake)"; sleep 330
+turn "Reply with exactly: R3" R3
+command_row "/cache"
+turn "Reply with exactly: R4" R4
+F4=$(transcript)
+[ -n "$F4" ] || { echo "ERROR no transcript for $ID under $PROJECTS"; exit 2; }
+cp "$F4" "$RUN/raise.jsonl"
+raise_rows=$(buckets "$F4")
+echo "$raise_rows" > "$RUN/raise-buckets.txt"
+outputs4=$(outputs "$F4")
+# The note that names 1 hour sits between R2's answer and R3's answer: it came with R3's prompt.
+note_before_r3() {
+  jq -s -r '(to_entries | map(select(.value.type=="user" and ((.value.message.content|tostring)|contains("exactly: R3")))) | .[0].key) as $u
+    | (to_entries | map(select(.key > $u and .value.type=="assistant")) | .[0].key) as $a
+    | (to_entries | map(select((.value|tostring)|contains("cache lives 1 hour"))) | .[0].key) as $n
+    | if $n != null and $u != null and $a != null and $n < $a and $n > ($u - 6) then "yes" else "no" end' "$1"
+}
+r3_note=$(note_before_r3 "$F4")
+u_r1=$(usage_of "$F4" R1); u_r2=$(usage_of "$F4" R2); u_r3=$(usage_of "$F4" R3); u_r4=$(usage_of "$F4" R4)
+
 # Every write-bearing request of a label carries the expected bucket.
 of() { grep "^$2 " <<<"$1" | awk '{print $2}' | grep -v '^none$' | sort -u | tr '\n' ' ' | sed 's/ $//'; }
 fail=0
@@ -301,6 +339,13 @@ row "(f) mid-turn: the reply line shows" yes "${f_seen:-no}"
 row "(f) mid-turn: a frame shows the toast and the turn running" yes "$([ -n "$t_seen" ] && [ -n "$t_marker" ] && echo yes)"
 row "(f) mid-turn: the turn finishes, not aborted" yes "${t11_ok:-no}"
 row "(f) T12 main after the mid-turn switch" 5m "$(of "$handoff_rows" T12)"
+row "(g) R1 main (mainTtl=5m, raiseAfterExpiries=2)" 5m "$(of "$raise_rows" R1)"
+row "(g) R2 1st expired wake" 5m "$(of "$raise_rows" R2)"
+row "(g) /cache after R2 counts 1 of 2" yes "$(grep -q 'auto-raise counting 1 of 2 expiries' <<<"$outputs4" && echo yes)"
+row "(g) R3 2nd expired wake: its own request" 1h "$(of "$raise_rows" R3)"
+row "(g) R3 prompt carries the note naming 1 hour" yes "$r3_note"
+row "(g) /cache after R3 says fired" yes "$(grep -q 'auto-raise fired' <<<"$outputs4" && echo yes)"
+row "(g) R4 next request stays" 1h "$(of "$raise_rows" R4)"
 u1=$(usage_of "$F" T1); u2=$(usage_of "$F" T2); u3=$(usage_of "$F" T3)
 info() { printf '| %-44s | %-6s | %-12s | %s |\n' "$1" "-" "$2" "INFO"; }
 info "premise: T2 read after 5m -> 1h" "$(field read "$u2")"
@@ -320,12 +365,13 @@ echo "  lower 1h -> 5m:  T2 (1h) $u2 · T3 (5m) $u3"
 echo "  lower 1h -> 5m, warm (e):  T9 (1h) $u9 · T10 (5m) $u10"
 echo "  raise 5m -> 1h, warm:  T10 (5m) $u10 · T11 (1h) $u11"
 echo "  lower 1h -> 5m, mid-turn (f):  T11 (1h) $u11 · T12 (5m) $u12"
+echo "  auto-raise (g):  R1 (5m) $u_r1 · R2 (5m, 1st expiry) $u_r2 · R3 (1h, 2nd expiry) $u_r3 · R4 (1h) $u_r4"
 echo
 echo "mid-turn capture: $RUN/midturn.txt"
 echo "  warning line: ${f_line:-none}"
 echo "toast frame: $RUN/midturn-frames/${t_frame:-none}.txt"
 echo "  toast text: ${t_line:-none}"
 echo
-echo "command output rows:"; outputs "$F" "$F2" "$F3" | sed 's/^/  /'
+echo "command output rows:"; outputs "$F" "$F2" "$F3" "$F4" | sed 's/^/  /'
 echo "evidence: $RUN"
 exit $fail

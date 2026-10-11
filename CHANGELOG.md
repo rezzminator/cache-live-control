@@ -4,6 +4,14 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+### Added
+- `raiseAfterExpiries` option (a whole number of 1 or more; empty = off, the default): a main chat at 5m whose cache has expired at the start of its Nth turn (the previous main request was at 5m and is 5 minutes old or more) sends that turn's request at 1h and stays at 1h for the rest of the session. The sub-agents' variable is never touched; a main chat already at 1h, or `FORCE_PROMPT_CACHING_5M`, changes nothing. `/cache main …` resets the count and `/cache main 5m` switches the raise off for the session; `/clear` starts the count again but keeps a typed `/cache main 5m` and a fired raise. A bad value is ignored and named by `/cache`.
+- `/cache` prints an auto-raise segment: off, counting (`1 of 2 expiries`), fired (`3m ago`), idle, off after `/cache main 5m`, inactive under `FORCE_PROMPT_CACHING_5M`, or failed (`the TTL may be unchanged`).
+- With `ttlNotice` on, the note on a prompt that wakes an expired cache names the TTL the request goes out at (the raise is weighed before the note). A wake that carries no prompt of yours gets the note when it passes through the prompt hook (a background task's or sub-agent's return); a wake the plugin itself injects fires no prompt hook, so no hook can carry a note into it, and the next prompt you type carries it.
+
+### Changed
+- `npm test` also runs hook tests on a copy of the plugin whose option defaults are set per test variant (`hook-tests/`, `scripts/test-hook-variants.sh`), since the test kit cannot pass options. The adapter reads time from `$.clock`, so hook tests can move it.
+
 ## [0.3.1] — 2026-10-02
 
 ### Added
