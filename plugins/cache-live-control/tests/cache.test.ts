@@ -1,5 +1,5 @@
 import type { On } from 'claude-code';
-import { describe, expect, test, type Engine } from 'claude-code/testing';
+import { describe, expect, mock, test, type Engine } from 'claude-code/testing';
 
 // Run with `claude plugin test plugins/cache-live-control`: the plugin loads
 // from this folder under the engine's own host; `on` here sits beneath it and
@@ -17,6 +17,7 @@ function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
   const commands: string[] = [];
   const toasts: { text: string; timeoutMs?: number }[] = [];
+  mock.clock(on, { now: 1_000_000_000_000 });
   on('ui.toast', async (_$, e) => {
     toasts.push({ text: e.text, timeoutMs: e.timeoutMs });
     return { value: undefined } as never;
@@ -94,7 +95,7 @@ describe('/cache', () => {
     await $.command.run(run('main 5m'));
     const out = await $.command.run(run(''));
     expect(out.text).toBe(
-      'main 5m (set by /cache, cold) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin, cold) · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m',
+      'main 5m (set by /cache, cold) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin, cold) · auto-raise off · agent-raise off · resume-guard off · handoff off · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m',
     );
   });
 
@@ -120,7 +121,8 @@ describe('options', () => {
   // The kit loads the plugin under test with its manifest's defaults and has no
   // way to hand it other options (an inline plugin is re-emitted as a module of
   // its own and cannot import this one). A non-empty mainTtl/subagentTtl is
-  // covered by tests/options.test.ts and by scripts/live-proof.sh.
+  // covered by tests/options.test.ts and by scripts/live-proof.sh; the
+  // auto-raise option is covered by hook-tests/ (scripts/test-hook-variants.sh).
   test('the default options leave both variables alone at session start', async ($, on) => {
     const w = world(on, { [AGENTS]: '1h' });
     await $.session.start(START);
@@ -128,7 +130,7 @@ describe('options', () => {
     expect(w.env.get(AGENTS)).toBe('1h');
     const out = await $.command.run(run(''));
     expect(out.text).toBe(
-      'main automatic (settings, agent frontmatter or plan default, cold) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin, cold)',
+      'main automatic (settings, agent frontmatter or plan default, cold) · agents 1h (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL set outside this plugin, cold) · auto-raise off · agent-raise off · resume-guard off · handoff off',
     );
   });
 });
@@ -169,7 +171,7 @@ describe('ENABLE_PROMPT_CACHING_1H at launch', () => {
     expect(w.env.get(MAIN)).toBe('1h');
     expect(w.env.has(AGENTS)).toBe(false);
     const out = await $.command.run(run(''));
-    expect(out.text).toBe(`main 1h (ENABLE_PROMPT_CACHING_1H at launch, main chat only, cold) · agents automatic (${AGENTS_AUTO}, cold)`);
+    expect(out.text).toBe(`main 1h (ENABLE_PROMPT_CACHING_1H at launch, main chat only, cold) · agents automatic (${AGENTS_AUTO}, cold) · auto-raise off · agent-raise off · resume-guard off · handoff off`);
   });
 
   test('a main variable set at launch wins; the sub-agents still lose the 1h', async ($, on) => {
@@ -216,7 +218,7 @@ describe('launch handoff', () => {
     expect(w.env.get(AGENTS)).toBe('5m');
     expect(w.env.has(HANDOFF_MAIN)).toBe(false);
     expect(w.env.has(HANDOFF_AGENTS)).toBe(false);
-    expect((await $.command.run(run(''))).text).toBe('main 1h (set at launch, cold) · agents 5m (set at launch, cold)');
+    expect((await $.command.run(run(''))).text).toBe('main 1h (set at launch, cold) · agents 5m (set at launch, cold) · auto-raise off · agent-raise off · resume-guard off · handoff off');
   });
 
   test('a variable set at launch beats the handoff; a bad handoff is named by /cache', async ($, on) => {
@@ -225,7 +227,7 @@ describe('launch handoff', () => {
     expect(w.env.get(MAIN)).toBe('5m');
     expect(w.env.has(AGENTS)).toBe(false);
     expect(w.env.has(HANDOFF_MAIN)).toBe(false);
-    expect((await $.command.run(run(''))).text).toMatch(/ · CACHE_LIVE_CONTROL_AGENTS_TTL "2h" ignored: use 5m, 1h or auto$/);
+    expect((await $.command.run(run(''))).text).toMatch(/ · auto-raise off · agent-raise off · resume-guard off · handoff off · CACHE_LIVE_CONTROL_AGENTS_TTL "2h" ignored: use 5m, 1h or auto$/);
   });
 
   test('a handoff auto keeps ENABLE_PROMPT_CACHING_1H off the main chat too', async ($, on) => {
@@ -243,7 +245,7 @@ describe('warm-cache warning', () => {
     const r = await step($);
     expect(r.chunks).toEqual([{ kind: 'text', index: 0, text: 'hello' }]);
     expect(r.result).toEqual({ turnId: 't', index: 0, answer: 'hello', toolUses: [], stopReason: 'end_turn', usage: null });
-    expect((await $.command.run(run(''))).text).toMatch(/^main 1h \(CLAUDE_CODE_PROMPT_CACHE_TTL set outside this plugin, warm 60m\) · agents automatic \(.*, cold\)$/);
+    expect((await $.command.run(run(''))).text).toMatch(/^main 1h \(CLAUDE_CODE_PROMPT_CACHE_TTL set outside this plugin, warm 60m\) · agents automatic \(.*, cold\) · auto-raise off · agent-raise off · resume-guard off · handoff off$/);
   });
 
   test('a warm change applies at once and says the cache was warm', async ($, on) => {

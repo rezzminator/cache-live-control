@@ -1,6 +1,6 @@
 {
   "name": "cache-live-control",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
   "license": "MIT",
   "author": {
@@ -28,6 +28,54 @@
       "title": "Tell the main chat its cache TTL",
       "description": "On: the main chat's first prompt, and the first prompt after its TTL changes or the chat compacts or clears, carries a short note to the model: which TTL it runs on, and whether to delegate long work to sub-agents (1h) or keep work in the chat (5m). Sub-agents never get it.",
       "default": false
+    },
+    "raiseAfterExpiries": {
+      "type": "string",
+      "title": "Main chat: raise to 1h after N expired wake-ups",
+      "description": "A whole number of 1 or more, or empty to leave it off. When the main chat runs at 5m and wakes to an expired cache for the Nth time in a session, that wake's request goes out at 1h and the main chat stays at 1h for the rest of the session. An explicit /cache main resets the count, and /cache main 5m switches the raise off for the session; FORCE_PROMPT_CACHING_5M and the sub-agents are never touched.",
+      "default": ""
+    },
+    "resumeGuard": {
+      "type": "string",
+      "title": "Sub-agents: guard against resuming a cold agent",
+      "description": "\"warn\", \"block\", or empty/\"off\" to leave it off. A SendMessage to a sub-agent whose prompt cache has expired and whose context is at least resumeGuardMinTokens re-writes that whole context at the cache-write price. warn sends the message and tells the sender what it cost; block refuses it, naming the cost, until the sender repeats the message beginning with [resume-anyway].",
+      "default": ""
+    },
+    "resumeGuardMinTokens": {
+      "type": "string",
+      "title": "Resume guard: context floor",
+      "description": "Tokens, such as 60000 or 60k: a cold agent with a smaller context is resumed without a word, since resuming it costs about what a fresh agent does.",
+      "default": "60000"
+    },
+    "resumeGuardPrice": {
+      "type": "string",
+      "title": "Resume guard: base input price (optional)",
+      "description": "USD per million base input tokens, such as 3 or 15. When set, the guard's text also shows the rewrite in dollars; empty shows tokens only (this plugin holds no price table).",
+      "default": ""
+    },
+    "agentRaiseWaiting": {
+      "type": "boolean",
+      "title": "Sub-agents: 1h when an agent launches background work",
+      "description": "On: while a sub-agent that launched a background sub-agent or a background shell is finishing its turn, every sub-agent request is written at 1h (they share one process-wide variable, so no agent can be raised alone), so its wake reads the cache. Costs 2x instead of 1.25x on every sub-agent cache write meanwhile. A typed /cache agents setting outranks it; FORCE_PROMPT_CACHING_5M and the main chat are never touched.",
+      "default": false
+    },
+    "agentRaiseAfterExpiries": {
+      "type": "string",
+      "title": "Sub-agents: 1h after N expired requests of one agent",
+      "description": "A whole number of 1 or more, or empty to leave it off. Once one sub-agent has found its own cache expired N times, every sub-agent request is written at 1h until that agent finishes or has been idle for an hour (same shared variable and cost as agentRaiseWaiting).",
+      "default": ""
+    },
+    "handoff": {
+      "type": "boolean",
+      "title": "Sub-agents: ask for a handoff file",
+      "description": "On: every sub-agent's prompt gets a short instruction to write a handoff (state, decisions, next steps, file:line anchors, open questions) to a file before its final answer; the resume guard then points to that file, so a fresh agent can start from it instead of resuming a cold one.",
+      "default": false
+    },
+    "handoffDir": {
+      "type": "string",
+      "title": "Handoff files: directory",
+      "description": "Where handoff files go, as an absolute path (a relative one is ignored). Empty uses this plugin's own data directory (<Claude config dir>/plugins/data/<plugin>-<marketplace>/handoffs).",
+      "default": ""
     }
   }
 }
