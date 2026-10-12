@@ -1,1 +1,1 @@
-{ "resumeGuard": "block", "resumeGuardMinTokens": "50k", "resumeGuardPrice": "3", "handoff": true, "handoffDir": "/hand" }
+{ "resumeGuard": "block", "resumeGuardMinTokens": "50k", "resumeGuardPrice": "3" }

@@ -2,6 +2,19 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+## [0.5.0] — 2026-10-13
+
+### Added
+- `summaries` option (`block`; `allow` or empty = Claude Code's behaviour, the default) and `/cache summaries off|on`: stop Claude Code's sub-agent progress summaries, a full-context request about every 30 s per running sub-agent whose reply only feeds the agent panel, while fork mode and background sub-agents stay on. The plugin adds the header `x-cache-live-control-summaries: block` to `ANTHROPIC_CUSTOM_HEADERS` (the user's own lines stay) and a gateway on `ANTHROPIC_BASE_URL` that honours it answers the request itself; without such a gateway the switch changes nothing. `/cache` shows a `summaries` segment.
+
+### Removed
+- Breaking: the agent handoff: the options `handoff` and `handoffDir`, the word `/cache handoff on|off` and its argument hint, the `handoff` segment of `/cache`, the instruction appended to each spawned sub-agent's prompt, and the resume guard's pointer to a handoff file (the guard itself stays and names no file). To migrate, delete both options from `pluginConfigs`; files already written stay where they are and nothing reads them. The launcher handoff (`CACHE_LIVE_CONTROL_MAIN_TTL`, `CACHE_LIVE_CONTROL_AGENTS_TTL`) is a different feature and stays.
+
+### Changed
+- `/cache` status lines carry `summaries on` where they carried `handoff off`.
+
 ## [0.4.1] — 2026-10-12
 
 ### Removed
@@ -56,7 +69,11 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 - `/cache`: the prompt-cache TTL of one chat, `5m`, `1h` or automatic, for the main chat (`/cache main …`), its sub-agents (`/cache agents …`) or both, from the next request and with no model turn. `/cache` alone shows each TTL and where it comes from.
 - Options `mainTtl` and `subagentTtl`: the TTL a session starts with.
 
-[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.3.0...develop
+[Unreleased]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.5.0...develop
+[0.5.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.4.1...cache-live-control--v0.5.0
+[0.4.1]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.4.0...cache-live-control--v0.4.1
+[0.4.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.3.1...cache-live-control--v0.4.0
+[0.3.1]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.3.0...cache-live-control--v0.3.1
 [0.3.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.2.0...cache-live-control--v0.3.0
 [0.2.0]: https://github.com/rezzminator/cache-live-control/compare/cache-live-control--v0.1.0...cache-live-control--v0.2.0
 [0.1.0]: https://github.com/rezzminator/cache-live-control/releases/tag/cache-live-control--v0.1.0

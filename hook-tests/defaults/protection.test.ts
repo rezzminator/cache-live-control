@@ -4,7 +4,9 @@ import { AGENTS, cache, MAIN, MIN, segment, START, world } from '../world.ts';
 // Run by scripts/test-hook-variants.sh with the manifest defaults: every piece
 // starts off, and /cache sets each threshold live.
 
-const OFF = 'auto-raise off · resume-guard off · handoff off';
+const OFF = 'auto-raise off · resume-guard off · summaries on';
+const HEADERS = 'ANTHROPIC_CUSTOM_HEADERS';
+const HEADER = 'x-cache-live-control-summaries';
 const INFO = { description: 'd', type: 'general-purpose' } as const;
 
 describe('everything starts off', () => {
@@ -190,33 +192,34 @@ describe('/cache raise N|off: the main chat\'s raise, set live', () => {
   });
 });
 
-describe('/cache handoff on|off', () => {
-  test('asks each spawned sub-agent for a handoff file under the plugin\'s data directory, and stops when off', async ($, on) => {
-    const w = world(on, { HOME: '/hm' });
+describe('/cache summaries on|off', () => {
+  test('off marks every request for a gateway, on takes the mark away, the user\'s own header lines stay', async ($, on) => {
+    const w = world(on, { ANTHROPIC_CUSTOM_HEADERS: 'X-Team: a' });
     await $.session.start(START);
-    expect(await cache($, 'handoff on')).toBe('handoff on (/hm/.claude/plugins/data/cache-live-control-inline/handoffs)');
-    await w.spawn($, { prompt: 'do X' });
-    const first = w.spawned[0]!;
-    expect(first.prompt).toMatch(/^do X\n\nBefore your final answer, write a handoff to /);
-    expect(first.prompt).toContain(`/hm/.claude/plugins/data/cache-live-control-inline/handoffs/${first.tool_use_id}.md`);
-    expect(await cache($, 'handoff off')).toBe('handoff off');
-    await w.spawn($, { prompt: 'do Y' });
-    expect(w.spawned[1]!.prompt).toBe('do Y');
+    expect(await cache($, 'summaries off')).toBe(`summaries off (sends ${HEADER}: block; a gateway must answer them)`);
+    expect(w.env.get(HEADERS)).toBe(`X-Team: a\n${HEADER}: block`);
+    expect(await cache($)).toContain(' · summaries off (');
+    expect(await cache($, 'summaries on')).toBe('summaries on');
+    expect(w.env.get(HEADERS)).toBe('X-Team: a');
   });
 
-  test('a configured directory is not needed from the environment: CLAUDE_CONFIG_DIR wins over HOME', async ($, on) => {
-    const w = world(on, { HOME: '/hm', CLAUDE_CONFIG_DIR: '/cfg' });
-    await $.session.start(START);
-    expect(await cache($, 'handoff on')).toBe('handoff on (/cfg/plugins/data/cache-live-control-inline/handoffs)');
-    void w;
-  });
-
-  test('says there is no directory, and asks for nothing, when none can be derived', async ($, on) => {
+  test('a write that lands but cannot be read back says it was made', async ($, on) => {
     const w = world(on);
     await $.session.start(START);
-    expect(await cache($, 'handoff on')).toBe('handoff on, no directory: set handoffDir');
-    await w.spawn($, { prompt: 'do X' });
-    expect(w.spawned[0]!.prompt).toBe('do X');
+    w.during.set = async () => {
+      w.reads.fails = true;
+    };
+    expect(await cache($, 'summaries off')).toMatch(/^summaries off, reading the header back failed: /);
+    w.reads.fails = false;
+    expect(w.env.get(HEADERS)).toBe(`${HEADER}: block`);
+  });
+
+  test('a refused write is said, and the status does not claim the mark', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    w.refused.add(HEADERS);
+    expect(await cache($, 'summaries off')).toMatch(/^summaries failed, the header may be unchanged: /);
+    expect(await cache($)).toContain(' · summaries on');
   });
 });
 

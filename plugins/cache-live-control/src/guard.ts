@@ -59,8 +59,6 @@ export type GuardInput = GuardConfig & {
   now: number;
   /** The TTL the resume's request would write at: the agents' variable now. */
   rewriteTtl: Ttl;
-  /** A handoff file written for this agent, when the handoff option is on and the file exists. */
-  handoff?: string;
 };
 
 export type Verdict = { kind: 'pass' } | { kind: 'warn' | 'block'; text: string };
@@ -77,7 +75,7 @@ export function rewriteTtl(env: EnvSnapshot, ours: Ours): Ttl {
 
 /** Pass, warn or block one SendMessage to `label`. */
 export function guardVerdict(input: GuardInput): Verdict {
-  const { mode, floor, price, record, label, now, rewriteTtl, handoff } = input;
+  const { mode, floor, price, record, label, now, rewriteTtl } = input;
   if (mode === 'off' || record === undefined) return { kind: 'pass' };
   // A context of 0 was never measured: nothing to warn about.
   if (record.context === 0 || record.context < floor) return { kind: 'pass' };
@@ -90,12 +88,11 @@ export function guardVerdict(input: GuardInput): Verdict {
   const body =
     `agent ${label} has been idle ${span(idle)} and its prompt cache expired ${span(idle - LIFE_MS[ttl])} ago (it was written at ${ttl}), ` +
     `so resuming re-writes its whole context: ~${tokenText(record.context)} tokens × ${mult} (a ${rewriteTtl} cache write) = ~${tokenText(equivalent)} input-token equivalents${usd}.`;
-  const pointer = handoff === undefined ? '' : ` A handoff for it is at ${handoff}: spawn a fresh agent from it instead of resuming.`;
   const tail =
     mode === 'block'
       ? ` Not sent. To resume it anyway (for example it holds uncommitted work), send the same message beginning with ${OVERRIDE}.`
       : ' Sent anyway: resumeGuard is warn.';
-  return { kind: mode, text: `${body}${pointer}${tail}` };
+  return { kind: mode, text: `${body}${tail}` };
 }
 
 function floorText(floor: number): string {

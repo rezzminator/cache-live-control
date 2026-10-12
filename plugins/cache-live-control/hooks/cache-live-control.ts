@@ -1,6 +1,5 @@
 import type { AgentInfo, EngineInterface, On, PluginOptions, Register } from 'claude-code';
-import { defaultDir, handoffFile, handoffStatus, withInstruction } from '../src/agenthandoff.ts';
-import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecord, type AgentRecords } from '../src/agents.ts';
+import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecords } from '../src/agents.ts';
 import { formatEvents, pushEvent, type Event } from '../src/events.ts';
 import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard.ts';
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
@@ -10,6 +9,7 @@ import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs, type Settings } from '../src/parse.ts';
 import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, setAfter as setRaiseAfter, type FailureKind, type RaiseState } from '../src/raise.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
+import { isMarked, summariesStatus, withMark } from '../src/summaries.ts';
 import { type Change, type Party, type Ttl } from '../src/ttl.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
 
@@ -20,7 +20,7 @@ const COMMAND = 'cache';
 
 type State = {
   options: ResolvedOptions;
-  /** Ignored options and handoff values, shown by `/cache`. */
+  /** Ignored options, launch-handoff values and a failed start write of the summaries mark, shown by `/cache`. */
   errors: string[];
   ours: Ours;
   /** Each party's latest model request, for the warm-cache warning. */
@@ -53,12 +53,10 @@ type State = {
   noticed?: Ttl;
   /** The auto-raise (option raiseAfterExpiries): its count, lock and whether it fired. */
   raise: RaiseState;
-  /** Every sub-agent's latest request, context and spawn, for the resume guard and the handoff. */
+  /** Every sub-agent's latest request, context, name and parent, for the resume guard. */
   agents: AgentRecords;
   /** The resume guard (option resumeGuard, resumeGuardMinTokens, resumeGuardPrice), live-settable by `/cache guard`. */
   guard: GuardConfig;
-  /** The agent handoff (options handoff, handoffDir), live-settable by `/cache handoff`. */
-  handoff: { on: boolean; dir?: string };
   /** What the protection did lately, newest last, shown by `/cache`. */
   events: Event[];
   /** The latest time a clock read returned, for an event whose own read failed. */
@@ -90,6 +88,11 @@ async function readHandoff($: EngineInterface): Promise<HandoffSnapshot> {
     main: await $.env.get('CACHE_LIVE_CONTROL_MAIN_TTL'),
     agents: await $.env.get('CACHE_LIVE_CONTROL_AGENTS_TTL'),
   };
+}
+
+/** The mark in ANTHROPIC_CUSTOM_HEADERS, which Claude Code re-reads for each request: the user's own lines stay. */
+async function writeSummaries($: EngineInterface, blocked: boolean): Promise<void> {
+  await $.env.set('ANTHROPIC_CUSTOM_HEADERS', withMark(await $.env.get('ANTHROPIC_CUSTOM_HEADERS'), blocked));
 }
 
 /** Consumed: a program the chat starts never inherits them, a reload never re-applies them. */
@@ -152,12 +155,20 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
     } catch (error) {
       $.ui.log(`cache-live-control: keeping ENABLE_PROMPT_CACHING_1H to the main chat failed, sub-agents may run 1h: ${message(error)}`);
     }
+    if (st.options.summaries === 'block') {
+      try {
+        await writeSummaries($, true);
+      } catch (error) {
+        $.ui.log(`cache-live-control: marking requests to stop the sub-agent summaries failed, they may still run: ${message(error)}`);
+        st.errors.push(`option summaries block: marking the requests failed, they are not marked: ${message(error)}`);
+      }
+    }
   }
   try {
     await $.command.register({
       name: COMMAND,
       description: 'Prompt-cache TTL, 5m, 1h or auto, for main, agents or both, and the cache-protection thresholds — words in any order',
-      argumentHint: '[main|agents] [5m|1h|auto] [raise N|off] [guard off|warn|block] [handoff on|off]',
+      argumentHint: '[main|agents] [5m|1h|auto] [raise N|off] [guard off|warn|block] [summaries on|off]',
       immediate: true,
     });
   } catch (error) {
@@ -221,42 +232,6 @@ function note(st: State, at: number, text: string): void {
   st.events = pushEvent(st.events, { at, text });
 }
 
-/** Where handoff files go: the option, else the plugin's own data directory; undefined when neither is known. */
-async function handoffDirOf(st: State, $: EngineInterface): Promise<string | undefined> {
-  if (st.handoff.dir !== undefined) return st.handoff.dir;
-  return defaultDir({
-    root: $.plugin.root,
-    name: $.plugin.name,
-    configDir: await $.env.get('CLAUDE_CONFIG_DIR'),
-    home: await $.env.get('HOME'),
-  });
-}
-
-/** The file a sub-agent spawned by `spawnId` is asked to write; undefined when the option is off or no directory is known. */
-async function handoffPathFor(st: State, $: EngineInterface, spawnId: string | undefined): Promise<string | undefined> {
-  if (!st.handoff.on || spawnId === undefined || spawnId === '') return undefined;
-  try {
-    const dir = await handoffDirOf(st, $);
-    return dir === undefined ? undefined : handoffFile(dir, spawnId);
-  } catch (error) {
-    $.ui.log(`cache-live-control: choosing the handoff directory failed, this agent is not asked for a handoff: ${message(error)}`);
-    return undefined;
-  }
-}
-
-/** The handoff file of a record's agent when the option is on and the file exists. */
-async function existingHandoff(st: State, $: EngineInterface, record: AgentRecord): Promise<string | undefined> {
-  if (record.spawn === undefined) return undefined;
-  const path = await handoffPathFor(st, $, record.spawn);
-  if (path === undefined) return undefined;
-  try {
-    return (await $.fs.exists(path)) ? path : undefined;
-  } catch (error) {
-    $.ui.log(`cache-live-control: looking for the handoff file ${path} failed, the resume guard names none: ${message(error)}`);
-    return undefined;
-  }
-}
-
 /**
  * A sub-agent's request is about to go out: its record is written with the TTL
  * the request will carry. Never throws.
@@ -283,8 +258,8 @@ function endAgents(st: State): void {
   st.agents = new Map();
 }
 
-/** A started sub-agent: its record gets its spawn call, name and parent. Never throws. */
-async function spawned(st: State, $: EngineInterface, agentId: string, info: { spawn: string; name?: string; parentId?: string }): Promise<void> {
+/** A started sub-agent: its record gets its name and parent. Never throws. */
+async function spawned(st: State, $: EngineInterface, agentId: string, info: { name?: string; parentId?: string }): Promise<void> {
   const conversation = st.conversation;
   try {
     const at = await $.clock.now();
@@ -316,14 +291,12 @@ async function checkSend(st: State, $: EngineInterface, to: string, text: string
     const record = id === undefined ? undefined : st.agents.get(id);
     if (id === undefined || record === undefined) return { body };
     const label = record.name ?? (to === id ? id : to);
-    const handoff = await existingHandoff(st, $, record);
     const verdict = guardVerdict({
       ...st.guard,
       record,
       label,
       now,
       rewriteTtl: rewriteTtl(await readEnv($), st.ours),
-      ...(handoff === undefined ? {} : { handoff }),
     });
     if (verdict.kind === 'pass') return { body };
     // A running agent gets the message at its next step, which rewrites nothing the message caused.
@@ -349,12 +322,11 @@ async function checkSend(st: State, $: EngineInterface, to: string, text: string
 
 /** The segments `/cache` shows for the protection pieces, the recent events last. */
 async function protectionSegments(st: State, $: EngineInterface, env: EnvSnapshot, now: number): Promise<string[]> {
-  const dir = st.handoff.on ? await handoffDirOf(st, $) : undefined;
   const events = formatEvents(st.events, now);
   return [
     raiseStatus(st.raise, env, st.ours, now),
     guardStatus(st.guard),
-    handoffStatus({ handoff: st.handoff.on, ...(dir === undefined ? {} : { dir }) }),
+    summariesStatus(isMarked(await $.env.get('ANTHROPIC_CUSTOM_HEADERS'))),
     ...(events === undefined ? [] : [events]),
   ];
 }
@@ -368,15 +340,24 @@ async function applySettings(st: State, $: EngineInterface, settings: Settings, 
     const { price: _price, ...rest } = st.guard;
     st.guard = settings.guardPrice === null ? rest : { ...rest, price: settings.guardPrice };
   }
-  if (settings.handoff !== undefined) st.handoff = { ...st.handoff, on: settings.handoff };
 
   const env = await readEnv($);
   const out: string[] = [];
   if (settings.raise !== undefined) out.push(raiseStatus(st.raise, env, st.ours, now));
   if (settings.guard !== undefined || settings.guardFloor !== undefined || settings.guardPrice !== undefined) out.push(guardStatus(st.guard));
-  if (settings.handoff !== undefined) {
-    const dir = st.handoff.on ? await handoffDirOf(st, $) : undefined;
-    out.push(handoffStatus({ handoff: st.handoff.on, ...(dir === undefined ? {} : { dir }) }));
+  if (settings.summaries !== undefined) {
+    let written = false;
+    try {
+      await writeSummaries($, settings.summaries === 'off');
+      written = true;
+      out.push(summariesStatus(isMarked(await $.env.get('ANTHROPIC_CUSTOM_HEADERS'))));
+    } catch (error) {
+      out.push(
+        written
+          ? `summaries ${settings.summaries}, reading the header back failed: ${message(error)}`
+          : `summaries failed, the header may be unchanged: ${message(error)}`,
+      );
+    }
   }
   return out;
 }
@@ -460,7 +441,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
       floor: resolved.guardFloor ?? DEFAULT_FLOOR,
       ...(resolved.guardPrice === undefined ? {} : { price: resolved.guardPrice }),
     },
-    handoff: { on: resolved.handoff === true, ...(resolved.handoffDir === undefined ? {} : { dir: resolved.handoffDir }) },
     events: [],
     conversation: 0,
   };
@@ -513,14 +493,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return result;
   });
 
-  // With the handoff option, a new sub-agent is asked to write a handoff file named
-  // by this call (its own id is known only after the spawn returns).
+  // A new sub-agent's name and parent label it for the resume guard.
   on('agent.spawn', async ($, e, next) => {
-    const path = await handoffPathFor(st, $, e.tool_use_id);
-    const result = await next(path === undefined ? e : { ...e, prompt: withInstruction(e.prompt, path) });
+    const result = await next(e);
     if (result.agentId !== undefined) {
       await spawned(st, $, result.agentId, {
-        spawn: e.tool_use_id,
         ...(e.name === undefined ? {} : { name: e.name }),
         ...(e.parentAgentId === undefined ? {} : { parentId: e.parentAgentId }),
       });

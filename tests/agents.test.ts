@@ -42,10 +42,10 @@ describe('noteRequest', () => {
     expect(before.get('a1')?.at).toBe(NOW - 5 * MIN);
   });
 
-  it('keeps the spawn, name and parent noted at spawn, and never changes its input', () => {
-    const spawned = noteSpawn(EMPTY, 'a1', { spawn: 'tu1', name: 'researcher', parentId: 'p1', at: NOW - MIN });
+  it('keeps the name and parent noted at spawn, and never changes its input', () => {
+    const spawned = noteSpawn(EMPTY, 'a1', { name: 'researcher', parentId: 'p1', at: NOW - MIN });
     const out = noteRequest(spawned, 'a1', { at: NOW, ttl: '5m' });
-    expect(out.get('a1')).toEqual({ at: NOW, ttl: '5m', context: 0, spawn: 'tu1', name: 'researcher', parentId: 'p1' });
+    expect(out.get('a1')).toEqual({ at: NOW, ttl: '5m', context: 0, name: 'researcher', parentId: 'p1' });
     expect(spawned.get('a1')?.at).toBe(NOW - MIN);
   });
 });
@@ -57,20 +57,19 @@ describe('noteUsage, noteSpawn, labelOf', () => {
     expect(noteUsage(before, 'zz', 5)).toBe(before);
   });
 
-  it('notes a spawn: the agent id, the spawn call, its name and parent', () => {
-    expect(noteSpawn(EMPTY, 'a1', { spawn: 'tu1', name: 'researcher', parentId: 'p1', at: NOW }).get('a1')).toEqual({
+  it('notes a spawn: the agent id, its name and parent', () => {
+    expect(noteSpawn(EMPTY, 'a1', { name: 'researcher', parentId: 'p1', at: NOW }).get('a1')).toEqual({
       at: NOW,
       ttl: 'automatic',
       context: 0,
       pending: true,
-      spawn: 'tu1',
       name: 'researcher',
       parentId: 'p1',
     });
   });
 
   it('clears the pending mark at the first request after a spawn', () => {
-    const spawned = noteSpawn(EMPTY, 'a1', { spawn: 'tu1', at: NOW - 30 * MIN });
+    const spawned = noteSpawn(EMPTY, 'a1', { at: NOW - 30 * MIN });
     expect(spawned.get('a1')).toHaveProperty('pending', true);
     expect(noteRequest(spawned, 'a1', { at: NOW, ttl: '5m' }).get('a1')).not.toHaveProperty('pending');
   });

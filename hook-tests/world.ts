@@ -98,9 +98,6 @@ export function world(on: On, initial: Record<string, string> = {}) {
     if (listing.fails) throw new Error('agent list refused');
     return { value: agentList.map((a) => ({ ...a })) } as never;
   });
-  /** The paths `$.fs.exists` finds. */
-  const files = new Set<string>();
-  on('fs.exists', async (_$, e) => ({ value: files.has(e.path) }) as never);
   /** Each agent.spawn that reached the bottom: the call, the prompt it carried, the id it started. */
   const spawned: { tool_use_id: string; prompt: string; agentId: string; parentAgentId?: string; background: boolean }[] = [];
   on('agent.spawn', async (_$, e) => {
@@ -186,7 +183,6 @@ export function world(on: On, initial: Record<string, string> = {}) {
     toasts,
     agentList,
     listing,
-    files,
     spawned,
     calls,
     agentRequests,

@@ -80,8 +80,8 @@ describe('settings words: thresholds set live', () => {
     ['guard price 15', { guardPrice: 15 }],
     ['guard price 2.5', { guardPrice: 2.5 }],
     ['guard price off', { guardPrice: null }],
-    ['handoff on', { handoff: true }],
-    ['HANDOFF OFF', { handoff: false }],
+    ['summaries off', { summaries: 'off' }],
+    ['SUMMARIES ON', { summaries: 'on' }],
   ])('parses %j as a setting with no TTL change', (args, settings) => {
     expect(parseArgs(args)).toEqual({ kind: 'set', change: {}, settings });
   });
@@ -89,7 +89,7 @@ describe('settings words: thresholds set live', () => {
   it.each<[string, Change, Settings]>([
     ['guard block main 1h', { main: '1h' }, { guard: 'block' }],
     ['main 1h guard block', { main: '1h' }, { guard: 'block' }],
-    ['raise 3 agents 5m handoff on main 1h', { agents: '5m', main: '1h' }, { raise: 3, handoff: true }],
+    ['raise 3 agents 5m summaries off main 1h', { agents: '5m', main: '1h' }, { raise: 3, summaries: 'off' }],
     ['5m, guard warn, guard floor 30k', { main: '5m', agents: '5m' }, { guard: 'warn', guardFloor: 30_000 }],
     ['raise 2 raise 2', {}, { raise: 2 }],
   ])('mixes settings with TTL groups in any order: %j', (args, change, settings) => {
@@ -112,8 +112,9 @@ describe('settings words: thresholds set live', () => {
     ['guard floor lots', 'guard floor needs a number of tokens such as 60000 or 60k'],
     ['guard price', 'guard price needs a number (USD per million input tokens) or off'],
     ['guard price 0', 'guard price needs a number (USD per million input tokens) or off'],
-    ['handoff', 'handoff needs on or off'],
-    ['handoff maybe', 'handoff needs on or off'],
+    ['summaries', 'summaries needs on or off'],
+    ['summaries maybe', 'summaries needs on or off'],
+    ['summaries on summaries off', 'summaries is given twice'],
     ['raise 2 raise 3', 'raise is given twice'],
     ['guard warn guard block', 'guard is given twice'],
     ['raise 3 agents', 'agents has no TTL'],
@@ -127,6 +128,6 @@ describe('settings words: thresholds set live', () => {
   it('names the settings in the usage', () => {
     expect(USAGE).toMatch(/raise N\|off/);
     expect(USAGE).toMatch(/guard off\|warn\|block/);
-    expect(USAGE).toMatch(/handoff on\|off/);
+    expect(USAGE).toMatch(/summaries on\|off/);
   });
 });

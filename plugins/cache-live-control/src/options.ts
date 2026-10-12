@@ -4,8 +4,8 @@ import { isTtl, PARTIES, type Party, type Ttl } from './ttl.ts';
 // The plugin's `userConfig`: a starting TTL per party, applied at session start
 // unless a variable or a launcher's handoff (handoff.ts) comes first, and the
 // opt-in TTL notice to the main chat (notice.ts), the main chat's auto-raise to
-// 1h after N expired wake-ups (raise.ts), and the sub-agent cache protection:
-// the cold-resume guard (guard.ts) and the agent handoff (agenthandoff.ts).
+// 1h after N expired wake-ups (raise.ts), the sub-agent cache protection (the
+// cold-resume guard, guard.ts) and the sub-agent progress summaries (summaries.ts).
 // Every one is off unless set. No option raises the sub-agents' TTL: they run
 // 5m unless `subagentTtl`, a typed `/cache agents` or an agent's own frontmatter says otherwise.
 
@@ -24,10 +24,8 @@ export type ResolvedOptions = {
   guardFloor?: number;
   /** resumeGuardPrice: USD per million base input tokens. */
   guardPrice?: number;
-  /** handoff: ask each spawned sub-agent for a handoff file; absent when off. */
-  handoff?: true;
-  /** handoffDir: where those files go; absent for the plugin's own data directory. */
-  handoffDir?: string;
+  /** summaries: `block` stops the sub-agent progress summaries from being asked of the model; absent when allowed. */
+  summaries?: 'block';
   /** One line per option that was ignored, naming it and its value. */
   errors: string[];
 };
@@ -106,11 +104,9 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>): Reso
     else out.errors.push(`option resumeGuardPrice ${JSON.stringify(price)} ignored: use a number (USD per million input tokens), or empty`);
   }
 
-  if (readFlag(options, 'handoff', out.errors)) out.handoff = true;
-
-  const dir = options['handoffDir'];
-  // Absolute only: the sub-agent writes the file from its own working directory, the plugin looks for it from another.
-  if (typeof dir === 'string' && dir.trim().startsWith('/')) out.handoffDir = dir.trim();
-  else if (!isEmpty(dir)) out.errors.push(`option handoffDir ${JSON.stringify(dir)} ignored: use an absolute directory path, or empty`);
+  const summaries = options['summaries'];
+  const word = typeof summaries === 'string' ? summaries.trim().toLowerCase() : summaries;
+  if (word === 'block') out.summaries = 'block';
+  else if (word !== 'allow' && !isEmpty(summaries)) out.errors.push(`option summaries ${JSON.stringify(summaries)} ignored: use block, allow or empty`);
   return out;
 }

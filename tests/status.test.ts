@@ -113,8 +113,8 @@ describe('formatState', () => {
 
 describe('the status segments', () => {
   it('joins several segments after the parties, in the order given', () => {
-    expect(formatStatus({}, NONE, [], undefined, ['auto-raise off', 'resume-guard off', 'handoff off'])).toMatch(
-      / · auto-raise off · resume-guard off · handoff off$/,
+    expect(formatStatus({}, NONE, [], undefined, ['auto-raise off', 'resume-guard off', 'summaries on'])).toMatch(
+      / · auto-raise off · resume-guard off · summaries on$/,
     );
     expect(formatStatus({ force5m: '1' }, NONE, ['option x ignored: y'], undefined, ['a', 'b'])).toMatch(/ · a · b · warning: FORCE_PROMPT_CACHING_5M="1" is set, so every request uses 5m · option x ignored: y$/);
   });

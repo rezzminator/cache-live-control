@@ -5,7 +5,7 @@ import { PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
 // `/cache` arguments to the one thing the command does. Words come in any
 // order: a group is some parties and one TTL, party-first (`main 1h`, closed
 // by its TTL) or TTL-first (`1h main agents`, open until the next TTL). Setting
-// words (`raise 3`, `guard block`, `handoff on`) are lifted
+// words (`raise 3`, `guard block`, `summaries off`) are lifted
 // out first, key first, and mix with the groups in any order.
 
 /** The thresholds a command sets live; `null` switches one off. */
@@ -18,8 +18,8 @@ export type Settings = {
   guardFloor?: number;
   /** `guard price N|off`: resumeGuardPrice. */
   guardPrice?: number | null;
-  /** `handoff on|off`. */
-  handoff?: boolean;
+  /** `summaries on|off`: `off` stops the sub-agent progress summaries (option summaries). */
+  summaries?: 'on' | 'off';
 };
 
 export type Action =
@@ -28,7 +28,7 @@ export type Action =
   | { kind: 'error'; message: string };
 
 export const USAGE =
-  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h · settings: raise N|off · guard off|warn|block · guard floor N|Nk · guard price N|off · handoff on|off';
+  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h · settings: raise N|off · guard off|warn|block · guard floor N|Nk · guard price N|off · summaries on|off';
 
 const PARTY_WORDS: Readonly<Record<string, readonly Party[]>> = {
   main: ['main'],
@@ -115,9 +115,9 @@ function takeSettings(words: readonly string[]): { rest: string[]; settings: Set
       } else {
         return { error: 'guard needs off, warn, block, floor N or price N' };
       }
-    } else if (word === 'handoff') {
-      if (next !== 'on' && next !== 'off') return { error: 'handoff needs on or off' };
-      error = put('handoff', 'handoff', next === 'on');
+    } else if (word === 'summaries') {
+      if (next !== 'on' && next !== 'off') return { error: 'summaries needs on or off' };
+      error = put('summaries', 'summaries', next);
       i += 1;
     } else {
       rest.push(word);

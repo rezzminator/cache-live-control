@@ -100,17 +100,12 @@ describe('the sub-agent cache protection options', () => {
     for (const raw of ['abc', '0', '-1']) expect(resolveOptions({ resumeGuardPrice: raw })).toEqual({ errors: [`option resumeGuardPrice ${JSON.stringify(raw)} ignored: ${use}`] });
   });
 
-  it('takes handoff as true or false, as a boolean or its spelling', () => {
-    expect(resolveOptions({ handoff: 'true' })).toEqual({ handoff: true, errors: [] });
-    expect(resolveOptions({ handoff: 'false' })).toEqual({ errors: [] });
-    expect(resolveOptions({ handoff: 1 })).toEqual({ errors: ['option handoff 1 ignored: use true or false'] });
-  });
-
-  it('takes handoffDir as a path; empty leaves the default', () => {
-    expect(resolveOptions({ handoffDir: ' /tmp/handoffs ' })).toEqual({ handoffDir: '/tmp/handoffs', errors: [] });
-    expect(resolveOptions({ handoffDir: '' })).toEqual({ errors: [] });
-    expect(resolveOptions({ handoffDir: 5 })).toEqual({ errors: ['option handoffDir 5 ignored: use an absolute directory path, or empty'] });
-    // A relative path would be read against the sub-agent's working directory, not the plugin's.
-    expect(resolveOptions({ handoffDir: 'handoffs' })).toEqual({ errors: ['option handoffDir "handoffs" ignored: use an absolute directory path, or empty'] });
+  it('takes summaries as block or allow; empty leaves Claude Code\'s behaviour', () => {
+    expect(resolveOptions({ summaries: 'block' })).toEqual({ summaries: 'block', errors: [] });
+    expect(resolveOptions({ summaries: ' BLOCK ' })).toEqual({ summaries: 'block', errors: [] });
+    expect(resolveOptions({ summaries: 'allow' })).toEqual({ errors: [] });
+    expect(resolveOptions({ summaries: '' })).toEqual({ errors: [] });
+    expect(resolveOptions({ summaries: true })).toEqual({ errors: ['option summaries true ignored: use block, allow or empty'] });
+    expect(resolveOptions({ summaries: 'off' })).toEqual({ errors: ['option summaries "off" ignored: use block, allow or empty'] });
   });
 });

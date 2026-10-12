@@ -69,7 +69,7 @@ export type Warmth = { records: Records; now: number };
 
 /**
  * `/cache` with no arguments: each party's TTL, its source and warmth, the
- * segments given (the auto-raise's, the guard's, the handoff's), one line.
+ * segments given (the auto-raise's, the guard's, the summaries'), one line.
  */
 export function formatStatus(env: EnvSnapshot, ours: Ours, optionErrors: readonly string[] = [], warmth?: Warmth, segments?: string | readonly string[]): string {
   const parties = PARTIES.map((party) => {
