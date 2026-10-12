@@ -6,7 +6,6 @@ import {
   noteSpawn,
   noteUsage,
   prune,
-  resetExpired,
   type AgentRecord,
   type AgentRecords,
 } from '../plugins/cache-live-control/src/agents.ts';
@@ -31,47 +30,29 @@ describe('contextOf', () => {
 });
 
 describe('noteRequest', () => {
-  it('records the first request of an agent, not expired', () => {
+  it('records the first request of an agent', () => {
     const out = noteRequest(EMPTY, 'a1', { at: NOW, ttl: 'automatic' });
-    expect(out.expired).toBe(false);
-    expect(out.count).toBe(0);
-    expect(out.records.get('a1')).toEqual({ at: NOW, ttl: 'automatic', context: 0, expired: 0 });
+    expect(out.get('a1')).toEqual({ at: NOW, ttl: 'automatic', context: 0 });
   });
 
-  it('counts a request whose own previous cache (5m for automatic) is 5 minutes old or more as expired', () => {
-    const before = records({ a1: { at: NOW - 5 * MIN, ttl: 'automatic', context: 90_000, expired: 0 } });
-    const out = noteRequest(before, 'a1', { at: NOW, ttl: 'automatic' });
-    expect(out.expired).toBe(true);
-    expect(out.count).toBe(1);
-    expect(out.records.get('a1')).toEqual({ at: NOW, ttl: 'automatic', context: 90_000, expired: 1 });
-  });
-
-  it('does not count a request a millisecond inside the TTL, and counts from the agent\'s own record only', () => {
-    const before = records({
-      a1: { at: NOW - 5 * MIN + 1, ttl: '5m', context: 0, expired: 0 },
-      a2: { at: NOW - 30 * MIN, ttl: '5m', context: 0, expired: 0 },
-    });
-    expect(noteRequest(before, 'a1', { at: NOW, ttl: '5m' }).expired).toBe(false);
-    expect(noteRequest(before, 'a3', { at: NOW, ttl: '5m' }).expired).toBe(false);
-  });
-
-  it('measures a record written at 1h against an hour', () => {
-    const before = records({ a1: { at: NOW - 59 * MIN, ttl: '1h', context: 0, expired: 2 } });
-    expect(noteRequest(before, 'a1', { at: NOW, ttl: '5m' })).toMatchObject({ expired: false, count: 2 });
-    expect(noteRequest(before, 'a1', { at: NOW + 2 * MIN, ttl: '5m' })).toMatchObject({ expired: true, count: 3 });
+  it('moves the agent\'s record to the new request and keeps its context', () => {
+    const before = records({ a1: { at: NOW - 5 * MIN, ttl: 'automatic', context: 90_000 } });
+    const out = noteRequest(before, 'a1', { at: NOW, ttl: '5m' });
+    expect(out.get('a1')).toEqual({ at: NOW, ttl: '5m', context: 90_000 });
+    expect(before.get('a1')?.at).toBe(NOW - 5 * MIN);
   });
 
   it('keeps the spawn, name and parent noted at spawn, and never changes its input', () => {
     const spawned = noteSpawn(EMPTY, 'a1', { spawn: 'tu1', name: 'researcher', parentId: 'p1', at: NOW - MIN });
     const out = noteRequest(spawned, 'a1', { at: NOW, ttl: '5m' });
-    expect(out.records.get('a1')).toEqual({ at: NOW, ttl: '5m', context: 0, expired: 0, spawn: 'tu1', name: 'researcher', parentId: 'p1' });
+    expect(out.get('a1')).toEqual({ at: NOW, ttl: '5m', context: 0, spawn: 'tu1', name: 'researcher', parentId: 'p1' });
     expect(spawned.get('a1')?.at).toBe(NOW - MIN);
   });
 });
 
-describe('noteUsage, noteSpawn, resetExpired, labelOf', () => {
+describe('noteUsage, noteSpawn, labelOf', () => {
   it('sets the context of a known agent and ignores an unknown one', () => {
-    const before = records({ a1: { at: NOW, ttl: '5m', context: 0, expired: 0 } });
+    const before = records({ a1: { at: NOW, ttl: '5m', context: 0 } });
     expect(noteUsage(before, 'a1', 187_000).get('a1')?.context).toBe(187_000);
     expect(noteUsage(before, 'zz', 5)).toBe(before);
   });
@@ -81,7 +62,6 @@ describe('noteUsage, noteSpawn, resetExpired, labelOf', () => {
       at: NOW,
       ttl: 'automatic',
       context: 0,
-      expired: 0,
       pending: true,
       spawn: 'tu1',
       name: 'researcher',
@@ -89,23 +69,14 @@ describe('noteUsage, noteSpawn, resetExpired, labelOf', () => {
     });
   });
 
-  it('counts no expiry for the first request after a spawn, however late, and the next one counts as usual', () => {
+  it('clears the pending mark at the first request after a spawn', () => {
     const spawned = noteSpawn(EMPTY, 'a1', { spawn: 'tu1', at: NOW - 30 * MIN });
-    const first = noteRequest(spawned, 'a1', { at: NOW, ttl: '5m' });
-    expect(first).toMatchObject({ expired: false, count: 0 });
-    expect(first.records.get('a1')).not.toHaveProperty('pending');
-    expect(noteRequest(first.records, 'a1', { at: NOW + 6 * MIN, ttl: '5m' })).toMatchObject({ expired: true, count: 1 });
-  });
-
-  it('zeroes every expired count', () => {
-    const before = records({ a1: { at: NOW, ttl: '5m', context: 1, expired: 3 }, a2: { at: NOW, ttl: '5m', context: 1, expired: 1 } });
-    const out = resetExpired(before);
-    expect([...out.values()].map((r) => r.expired)).toEqual([0, 0]);
-    expect(before.get('a1')?.expired).toBe(3);
+    expect(spawned.get('a1')).toHaveProperty('pending', true);
+    expect(noteRequest(spawned, 'a1', { at: NOW, ttl: '5m' }).get('a1')).not.toHaveProperty('pending');
   });
 
   it('labels an agent by its name, else its id', () => {
-    const r = records({ a1: { at: NOW, ttl: '5m', context: 0, expired: 0, name: 'researcher' }, a2: { at: NOW, ttl: '5m', context: 0, expired: 0 } });
+    const r = records({ a1: { at: NOW, ttl: '5m', context: 0, name: 'researcher' }, a2: { at: NOW, ttl: '5m', context: 0 } });
     expect(labelOf(r, 'a1')).toBe('researcher');
     expect(labelOf(r, 'a2')).toBe('a2');
     expect(labelOf(r, 'unknown')).toBe('unknown');
@@ -113,20 +84,20 @@ describe('noteUsage, noteSpawn, resetExpired, labelOf', () => {
 });
 
 describe('prune', () => {
-  const warm: AgentRecord = { at: NOW - MIN, ttl: 'automatic', context: 1, expired: 0 };
-  const cold: AgentRecord = { at: NOW - 30 * MIN, ttl: 'automatic', context: 1, expired: 0 };
+  const warm: AgentRecord = { at: NOW - MIN, ttl: 'automatic', context: 1 };
+  const cold: AgentRecord = { at: NOW - 30 * MIN, ttl: 'automatic', context: 1 };
 
   it('forgets an agent whose cache can no longer be warm when nothing needs it', () => {
     const out = prune(records({ warm, cold }), NOW, false);
     expect([...out.keys()]).toEqual(['warm']);
   });
 
-  it('keeps a cold agent while the resume guard or the reactive raise needs it', () => {
+  it('keeps a cold agent while the resume guard needs it', () => {
     expect([...prune(records({ warm, cold }), NOW, true).keys()]).toEqual(['warm', 'cold']);
   });
 
   it('measures warmth by the record\'s own TTL', () => {
-    const hour: AgentRecord = { at: NOW - 30 * MIN, ttl: '1h', context: 1, expired: 0 };
+    const hour: AgentRecord = { at: NOW - 30 * MIN, ttl: '1h', context: 1 };
     expect([...prune(records({ hour }), NOW, false).keys()]).toEqual(['hour']);
   });
 

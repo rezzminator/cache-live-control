@@ -2,6 +2,17 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [0.4.1] — 2026-10-12
+
+### Removed
+- The sub-agents' auto-raise of 0.4.0, end to end: the options `agentRaiseWaiting` and `agentRaiseAfterExpiries`, the `/cache agents raise N|off` and `/cache agents waiting on|off` words, the `agent-raise` segment of `/cache`, its events (`raised the agents to 1h …`, `handed the agents variable back …`) and the per-agent expired-request count that only it read. It wrote the one process-wide `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` whenever any sub-agent launched background work, so every sub-agent ran 1h and paid the 2× write, not only the one waiting. Migrating: delete both options from `pluginConfigs`; a leftover key is ignored by Claude Code. `/cache agents 5m|1h|auto` typed by you, `subagentTtl`, the resume guard, the handoff files and the main chat's `raiseAfterExpiries` are unchanged.
+
+### Fixed
+- Sub-agents run at Claude Code's default 5m prompt-cache TTL unless an agent's own frontmatter, the `subagentPromptCacheTtl` setting, `subagentTtl` or a typed `/cache agents` says otherwise; the plugin no longer raises them on its own.
+
+### Changed
+- `npm run live` drops phase (h), the agents' raise; the cold-resume guard is phase (h) now.
+
 ## [0.4.0] — 2026-10-11
 
 ### Added

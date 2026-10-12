@@ -1,26 +1,6 @@
 import type { AgentInfo, EngineInterface, On, PluginOptions, Register } from 'claude-code';
-import {
-  abandoned,
-  agentRaiseStatus,
-  dropAll,
-  markFailed as markAgentRaiseFailed,
-  markRaised,
-  markReadOk,
-  markRestored,
-  newAgentRaise,
-  onCommand as onAgentsCommand,
-  onLaunch,
-  onRequest,
-  onTurnComplete,
-  rejoined,
-  restorePlan,
-  setAfter as setAgentRaiseAfter,
-  setWaiting,
-  sweep,
-  type AgentRaiseState,
-} from '../src/agentraise.ts';
 import { defaultDir, handoffFile, handoffStatus, withInstruction } from '../src/agenthandoff.ts';
-import { AGENT_CAP, contextOf, labelOf, noteRequest, noteSpawn, noteUsage, prune, resetExpired, type AgentRecord, type AgentRecords } from '../src/agents.ts';
+import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecord, type AgentRecords } from '../src/agents.ts';
 import { formatEvents, pushEvent, type Event } from '../src/events.ts';
 import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard.ts';
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
@@ -30,7 +10,7 @@ import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs, type Settings } from '../src/parse.ts';
 import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, setAfter as setRaiseAfter, type FailureKind, type RaiseState } from '../src/raise.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
-import { isTtl, type Change, type Party, type Ttl } from '../src/ttl.ts';
+import { type Change, type Party, type Ttl } from '../src/ttl.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
 
 // Thin adapter: every decision lives in src/. Claude Code reads the TTL
@@ -73,12 +53,8 @@ type State = {
   noticed?: Ttl;
   /** The auto-raise (option raiseAfterExpiries): its count, lock and whether it fired. */
   raise: RaiseState;
-  /** Every sub-agent's latest request, context and spawn, for the resume guard and the agents' raise. */
+  /** Every sub-agent's latest request, context and spawn, for the resume guard and the handoff. */
   agents: AgentRecords;
-  /** The agents' auto-raise (options agentRaiseWaiting, agentRaiseAfterExpiries): its holders and what it wrote. */
-  araise: AgentRaiseState;
-  /** `/cache` commands that changed the agents: one typed while the agents' raise writes takes precedence over it. */
-  agentsTyped: number;
   /** The resume guard (option resumeGuard, resumeGuardMinTokens, resumeGuardPrice), live-settable by `/cache guard`. */
   guard: GuardConfig;
   /** The agent handoff (options handoff, handoffDir), live-settable by `/cache handoff`. */
@@ -87,10 +63,6 @@ type State = {
   events: Event[];
   /** The latest time a clock read returned, for an event whose own read failed. */
   lastAt?: number;
-  /** What the latest typed `/cache agents` wrote: written again when a raise or hand-back write may have landed after it. */
-  typedAgents?: Ttl | null;
-  /** Raise and hand-back writes issued, so a typed `/cache agents` knows one was in flight beside its own. */
-  agentWrites: number;
   /** Bumped by every new conversation: a request noted across one belongs to the old. */
   conversation: number;
 };
@@ -185,7 +157,7 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
     await $.command.register({
       name: COMMAND,
       description: 'Prompt-cache TTL, 5m, 1h or auto, for main, agents or both, and the cache-protection thresholds — words in any order',
-      argumentHint: '[main|agents] [5m|1h|auto] [raise N|off] [agents raise N|off] [guard off|warn|block] [handoff on|off]',
+      argumentHint: '[main|agents] [5m|1h|auto] [raise N|off] [guard off|warn|block] [handoff on|off]',
       immediate: true,
     });
   } catch (error) {
@@ -286,190 +258,28 @@ async function existingHandoff(st: State, $: EngineInterface, record: AgentRecor
 }
 
 /**
- * Writes 1h to the agents' variable for the holders, which every sub-agent
- * request built from now on shares. `typed` is the count of `/cache` commands
- * that changed the agents when the caller began: a later one outranks this.
- */
-async function raiseAgents(st: State, $: EngineInterface, now: number, why: string, typed: number): Promise<boolean> {
-  st.agentWrites += 1;
-  try {
-    await writeParty($, 'agents', '1h');
-  } catch (error) {
-    if (st.agentsTyped === typed) st.araise = markAgentRaiseFailed(st.araise, message(error));
-    $.ui.log(`cache-live-control: the agents' auto-raise failed, the TTL may be unchanged: ${message(error)}`);
-    return false;
-  }
-  // A `/cache agents` typed meanwhile answered first, and this 1h may have landed after its value.
-  if (st.agentsTyped !== typed) {
-    await retype(st, $);
-    return false;
-  }
-  st.ours.agents = { value: '1h', via: 'agent-raise' };
-  st.araise = markRaised(st.araise, now);
-  note(st, now, `raised the agents to 1h for ${why}`);
-  if (!abandoned(st.araise)) return true;
-  // Every holder let go while the 1h was being written: it goes back at once.
-  await handBack(st, $, typed);
-  return false;
-}
-
-/** The holders a raise is written for, and why, for its event. */
-function holdersText(st: State): string {
-  const first = st.araise.holders[0];
-  const why = first?.kind === 'sleeper' ? `after ${st.araise.after} expiries` : 'waiting';
-  return `${st.araise.holders.map((h) => h.label).join(', ')} (${why})`;
-}
-
-/** A typed `/cache agents` answered while a raise or hand-back write was in flight: its value is written again, so it stands. */
-async function retype(st: State, $: EngineInterface): Promise<void> {
-  if (st.typedAgents === undefined) return;
-  try {
-    await writeParty($, 'agents', st.typedAgents);
-  } catch (error) {
-    st.araise = markAgentRaiseFailed(st.araise, `writing the typed agents value again failed: ${message(error)}`);
-    $.ui.log(`cache-live-control: writing the typed /cache agents value again failed, the TTL may be unchanged: ${message(error)}`);
-  }
-}
-
-/** The clock, or the latest time read when it fails: for a step that must go on without it. */
-async function nowOr(st: State, $: EngineInterface, what: string): Promise<number> {
-  try {
-    const now = await $.clock.now();
-    st.lastAt = now;
-    return now;
-  } catch (error) {
-    $.ui.log(`cache-live-control: reading the clock for ${what} failed, the latest time read stands in: ${message(error)}`, { to: 'debug' });
-    return st.lastAt ?? 0;
-  }
-}
-
-/**
- * The last holder let go: hands the variable back to what it held before, but
- * only while it still holds our 1h; a variable anyone else changed stands.
- */
-async function handBack(st: State, $: EngineInterface, typed: number): Promise<void> {
-  try {
-    const now = await nowOr(st, $, 'the hand-back');
-    const env = await readEnv($);
-    const plan = restorePlan(st.araise, env, st.ours);
-    // A `/cache agents` typed meanwhile has answered, and a holder who joined keeps the 1h.
-    if (st.agentsTyped !== typed || st.araise.holders.length > 0) return;
-    if (!plan.restore) {
-      if (st.ours.agents?.via === 'agent-raise') delete st.ours.agents;
-      st.araise = markRestored(st.araise);
-      return;
-    }
-    st.agentWrites += 1;
-    await writeParty($, 'agents', isTtl(plan.value) ? plan.value : null);
-    // A `/cache agents` typed while the hand-back was written stands.
-    if (st.agentsTyped !== typed) {
-      await retype(st, $);
-      return;
-    }
-    if (plan.ours === undefined) delete st.ours.agents;
-    else st.ours.agents = plan.ours;
-    note(st, now, `handed the agents variable back (${plan.value ?? 'unset'})`);
-    // An agent that launched while the hand-back was written joined a raise that was ending: it gets the 1h again.
-    const again = rejoined(markRestored(st.araise), { value: plan.value, ours: plan.ours });
-    st.araise = again.state;
-    if (again.raise) await raiseAgents(st, $, now, holdersText(st), typed);
-  } catch (error) {
-    st.araise = markAgentRaiseFailed(st.araise, `handing the agents variable back failed: ${message(error)}`);
-    $.ui.log(`cache-live-control: handing the agents variable back failed, it may still be 1h: ${message(error)}`);
-  }
-}
-
-/** An agent launched background work (a background sub-agent or shell): it will end its turn and wait. */
-async function launched(st: State, $: EngineInterface, id: string): Promise<void> {
-  if (!st.araise.waiting) return;
-  const label = labelOf(st.agents, id);
-  try {
-    const typed = st.agentsTyped;
-    const now = await $.clock.now();
-    st.lastAt = now;
-    const env = await readEnv($);
-    st.araise = markReadOk(st.araise);
-    const held = onLaunch(st.araise, { id, label, now, env, ours: st.ours });
-    st.araise = held.state;
-    if (held.raise) await raiseAgents(st, $, now, `${label} (waiting)`, typed);
-  } catch (error) {
-    st.araise = markAgentRaiseFailed(st.araise, `holding the agents at 1h for ${label} failed: ${message(error)}`, 'read');
-    $.ui.log(`cache-live-control: holding the agents at 1h for ${label}, which launched background work, failed, the TTL may be unchanged: ${message(error)}`);
-  }
-}
-
-/** A sub-agent's turn ended: a holder that waits on background work, or has finished, is let go. */
-async function agentTurnEnded(st: State, $: EngineInterface, id: string): Promise<void> {
-  const holder = st.araise.holders.find((h) => h.id === id);
-  if (holder === undefined) return;
-  const typed = st.agentsTyped;
-  const now = await nowOr(st, $, 'a sub-agent turn end');
-  // A sleeper stays held while the agent can still wake: listed running or waiting.
-  let status: string | undefined;
-  if (holder.kind === 'sleeper') {
-    try {
-      status = (await $.agent.list()).find((a) => a.id === id)?.status;
-    } catch (error) {
-      st.araise = markAgentRaiseFailed(st.araise, `reading the agent list at the end of a turn of ${holder.label} failed, it stays held: ${message(error)}`, 'read');
-      $.ui.log(`cache-live-control: reading the agent list at the end of a turn of ${holder.label} failed, it stays held at 1h: ${message(error)}`);
-      return;
-    }
-  }
-  const ended = onTurnComplete(st.araise, { id, terminal: status !== 'running' && status !== 'waiting', now });
-  st.araise = ended.state;
-  if (ended.restore) await handBack(st, $, typed);
-}
-
-/**
- * A sub-agent's request is about to go out: the holders idle for an hour are let
- * go, its own cache expiry is counted (the reactive raise), and its record is
- * written with the TTL the request will carry. Never throws.
+ * A sub-agent's request is about to go out: its record is written with the TTL
+ * the request will carry. Never throws.
  */
 async function agentRequest(st: State, $: EngineInterface, id: string): Promise<void> {
   const conversation = st.conversation;
   try {
-    const typed = st.agentsTyped;
     const at = await $.clock.now();
     st.lastAt = at;
-    const swept = sweep(st.araise, at);
-    st.araise = swept.state;
-    if (swept.restore) await handBack(st, $, typed);
-    const env = await readEnv($);
-    st.araise = markReadOk(st.araise);
-    let ttl = recordedTtl(env.agents);
-    const label = labelOf(st.agents, id);
-    const expired = noteRequest(st.agents, id, { at, ttl });
-    const asked = onRequest(st.araise, { id, label, now: at, env, ours: st.ours, count: expired.count });
-    st.araise = asked.state;
-    if (asked.raise && (await raiseAgents(st, $, at, `${label} (after ${st.araise.after} expiries)`, typed))) ttl = '1h';
+    const ttl = recordedTtl(await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'));
     // A new conversation began meanwhile: this agent is not its.
     if (st.conversation !== conversation) return;
-    // The map is read again: the awaits above let other agents' requests in.
-    const keepCold = st.guard.mode !== 'off' || st.araise.after !== undefined;
-    st.agents = prune(noteRequest(st.agents, id, { at, ttl }).records, at, keepCold, AGENT_CAP);
+    // The map is read after the awaits above, which let other agents' requests in.
+    st.agents = prune(noteRequest(st.agents, id, { at, ttl }), at, st.guard.mode !== 'off', AGENT_CAP);
     st.records.agents = { at, ttl };
   } catch (error) {
-    const label = labelOf(st.agents, id);
-    if (st.araise.after === undefined) {
-      $.ui.log(`cache-live-control: noting a request of agent ${label} for the resume guard failed: ${message(error)}`, { to: 'debug' });
-      return;
-    }
-    st.araise = markAgentRaiseFailed(st.araise, `checking a request of ${label} failed: ${message(error)}`, 'read');
-    $.ui.log(`cache-live-control: checking a request of agent ${label} for the agents' raise failed, the TTL may be unchanged: ${message(error)}`);
+    $.ui.log(`cache-live-control: noting a request of agent ${id} for the resume guard failed: ${message(error)}`, { to: 'debug' });
   }
 }
 
-/** A new conversation: its agents are not this one's, and the holders let go. */
-async function endAgents(st: State, $: EngineInterface): Promise<void> {
+/** A new conversation: its agents are not this one's. */
+function endAgents(st: State): void {
   st.conversation += 1;
-  try {
-    const typed = st.agentsTyped;
-    const dropped = dropAll(st.araise);
-    st.araise = dropped.state;
-    if (dropped.restore) await handBack(st, $, typed);
-  } catch (error) {
-    $.ui.log(`cache-live-control: letting go of the agents' raise at the end of the conversation failed: ${message(error)}`);
-  }
   st.agents = new Map();
 }
 
@@ -543,7 +353,6 @@ async function protectionSegments(st: State, $: EngineInterface, env: EnvSnapsho
   const events = formatEvents(st.events, now);
   return [
     raiseStatus(st.raise, env, st.ours, now),
-    agentRaiseStatus(st.araise, env, st.ours, now),
     guardStatus(st.guard),
     handoffStatus({ handoff: st.handoff.on, ...(dir === undefined ? {} : { dir }) }),
     ...(events === undefined ? [] : [events]),
@@ -552,18 +361,7 @@ async function protectionSegments(st: State, $: EngineInterface, env: EnvSnapsho
 
 /** The thresholds a `/cache` command sets live; the segments of the pieces it touched, for its reply. */
 async function applySettings(st: State, $: EngineInterface, settings: Settings, now: number): Promise<string[]> {
-  const typed = st.agentsTyped;
   if (settings.raise !== undefined) st.raise = setRaiseAfter(st.raise, settings.raise ?? undefined);
-  if (settings.agentRaise !== undefined) {
-    const set = setAgentRaiseAfter(st.araise, settings.agentRaise ?? undefined);
-    st.araise = set.state;
-    if (set.restore) await handBack(st, $, typed);
-  }
-  if (settings.agentWaiting !== undefined) {
-    const set = setWaiting(st.araise, settings.agentWaiting);
-    st.araise = set.state;
-    if (set.restore) await handBack(st, $, typed);
-  }
   if (settings.guard !== undefined) st.guard = { ...st.guard, mode: settings.guard };
   if (settings.guardFloor !== undefined) st.guard = { ...st.guard, floor: settings.guardFloor };
   if (settings.guardPrice !== undefined) {
@@ -575,7 +373,6 @@ async function applySettings(st: State, $: EngineInterface, settings: Settings, 
   const env = await readEnv($);
   const out: string[] = [];
   if (settings.raise !== undefined) out.push(raiseStatus(st.raise, env, st.ours, now));
-  if (settings.agentRaise !== undefined || settings.agentWaiting !== undefined) out.push(agentRaiseStatus(st.araise, env, st.ours, now));
   if (settings.guard !== undefined || settings.guardFloor !== undefined || settings.guardPrice !== undefined) out.push(guardStatus(st.guard));
   if (settings.handoff !== undefined) {
     const dir = st.handoff.on ? await handoffDirOf(st, $) : undefined;
@@ -616,21 +413,12 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
     if (changes) {
       try {
         const warm = warmChanges(action.change, await readEnv($), st.records, now, st.launch1h);
-        const writes = st.agentWrites;
         try {
           await apply(st, $, action.change, 'command');
         } finally {
           // The user's explicit word wins, whether or not every write landed.
           st.raise = onCommand(st.raise, action.change);
           if (action.change.main !== undefined) st.mainTyped += 1;
-          if (action.change.agents !== undefined) {
-            st.araise = onAgentsCommand(st.araise, action.change);
-            st.agents = resetExpired(st.agents);
-            st.agentsTyped += 1;
-            st.typedAgents = action.change.agents;
-            // A raise or hand-back write issued while this one was in flight may have landed after it.
-            if (st.agentWrites !== writes) await retype(st, $);
-          }
         }
         const state = formatState(await readEnv($), st.ours);
         if (warm.length > 0 && st.mainTurnRunning) toast($, `${warmNote(warm)} — now ${state}`, 'warm-cache');
@@ -667,8 +455,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     mainTurnRunning: false,
     mainTyped: 0,
     agents: new Map(),
-    araise: newAgentRaise({ waiting: resolved.agentRaiseWaiting === true, after: resolved.agentRaiseAfter }),
-    agentsTyped: 0,
     guard: {
       mode: resolved.guard ?? 'off',
       floor: resolved.guardFloor ?? DEFAULT_FLOOR,
@@ -676,7 +462,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     },
     handoff: { on: resolved.handoff === true, ...(resolved.handoffDir === undefined ? {} : { dir: resolved.handoffDir }) },
     events: [],
-    agentWrites: 0,
     conversation: 0,
   };
 
@@ -706,20 +491,13 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return next(e);
   });
 
-  // A sub-agent's turn end releases the agents' raise it held.
-  on('turn.complete', async ($, e, next) => {
-    try {
-      if (e.agentId === undefined) st.mainTurnRunning = false;
-      else await agentTurnEnded(st, $, e.agentId);
-    } catch (error) {
-      $.ui.log(`cache-live-control: noting a turn end failed: ${message(error)}`, { to: 'debug' });
-    }
+  on('turn.complete', async (_$, e, next) => {
+    if (e.agentId === undefined) st.mainTurnRunning = false;
     return next(e);
   });
 
-  // The main chat's request is noted without holding it. A sub-agent's request
-  // waits only while the agents' reactive raise is on: the variable must be
-  // final before it leaves. The stream itself passes through untouched.
+  // A request is noted without holding it, and the stream itself passes through
+  // untouched; a sub-agent's usage waits for its record.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       recordStep(st, $, 'main').catch((error: unknown) => {
@@ -727,10 +505,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       });
       return yield* next(e);
     }
-    // Only the reactive raise must have written before the request leaves; otherwise
-    // the request is not held, and its usage waits for its record instead.
     const noted = agentRequest(st, $, e.agentId);
-    if (st.araise.after !== undefined) await noted;
     const result = yield* next(e);
     await noted;
     const context = contextOf(result.usage);
@@ -738,11 +513,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return result;
   });
 
-  // A sub-agent's launch of a background sub-agent: it will end its turn and wait.
-  // With the handoff option, the new agent is asked to write a handoff file named
+  // With the handoff option, a new sub-agent is asked to write a handoff file named
   // by this call (its own id is known only after the spawn returns).
   on('agent.spawn', async ($, e, next) => {
-    if (e.parentAgentId !== undefined && e.background) await launched(st, $, e.parentAgentId);
     const path = await handoffPathFor(st, $, e.tool_use_id);
     const result = await next(path === undefined ? e : { ...e, prompt: withInstruction(e.prompt, path) });
     if (result.agentId !== undefined) {
@@ -765,13 +538,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     if (checked.warn === undefined || result.deny !== undefined) return result;
     toast($, checked.warn, 'resume-guard');
     return { ...result, context: [...(result.context ?? []), checked.warn] };
-  });
-
-  // A sub-agent's background shell: it will end its turn and wait for it.
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const call = e as unknown as { agentId?: string; run_in_background?: unknown };
-    if (call.agentId !== undefined && call.run_in_background === true) await launched(st, $, call.agentId);
-    return next(e);
   });
 
   on('command.run', { command: COMMAND }, async ($, e) => runCommand(st, $, e.args));
@@ -827,7 +593,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('session.end', async ($, e, next) => {
     delete st.noticed;
     await restartRaise(st, $, onSessionEnd, 'end');
-    await endAgents(st, $);
+    endAgents(st);
     return next(e);
   });
 };

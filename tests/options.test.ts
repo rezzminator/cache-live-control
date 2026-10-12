@@ -100,20 +100,10 @@ describe('the sub-agent cache protection options', () => {
     for (const raw of ['abc', '0', '-1']) expect(resolveOptions({ resumeGuardPrice: raw })).toEqual({ errors: [`option resumeGuardPrice ${JSON.stringify(raw)} ignored: ${use}`] });
   });
 
-  it('takes agentRaiseWaiting and handoff as true or false, as a boolean or its spelling', () => {
-    expect(resolveOptions({ agentRaiseWaiting: true, handoff: 'true' })).toEqual({ agentRaiseWaiting: true, handoff: true, errors: [] });
-    expect(resolveOptions({ agentRaiseWaiting: false, handoff: 'false' })).toEqual({ errors: [] });
-    expect(resolveOptions({ agentRaiseWaiting: 'yes', handoff: 1 })).toEqual({
-      errors: ['option agentRaiseWaiting "yes" ignored: use true or false', 'option handoff 1 ignored: use true or false'],
-    });
-  });
-
-  it('takes agentRaiseAfterExpiries as a whole number of 1 or more', () => {
-    expect(resolveOptions({ agentRaiseAfterExpiries: '3' })).toEqual({ agentRaiseAfter: 3, errors: [] });
-    expect(resolveOptions({ agentRaiseAfterExpiries: '' })).toEqual({ errors: [] });
-    expect(resolveOptions({ agentRaiseAfterExpiries: '0' })).toEqual({
-      errors: ['option agentRaiseAfterExpiries "0" ignored: use a whole number of 1 or more, or empty'],
-    });
+  it('takes handoff as true or false, as a boolean or its spelling', () => {
+    expect(resolveOptions({ handoff: 'true' })).toEqual({ handoff: true, errors: [] });
+    expect(resolveOptions({ handoff: 'false' })).toEqual({ errors: [] });
+    expect(resolveOptions({ handoff: 1 })).toEqual({ errors: ['option handoff 1 ignored: use true or false'] });
   });
 
   it('takes handoffDir as a path; empty leaves the default', () => {

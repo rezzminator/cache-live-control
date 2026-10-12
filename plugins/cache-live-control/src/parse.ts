@@ -5,17 +5,13 @@ import { PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
 // `/cache` arguments to the one thing the command does. Words come in any
 // order: a group is some parties and one TTL, party-first (`main 1h`, closed
 // by its TTL) or TTL-first (`1h main agents`, open until the next TTL). Setting
-// words (`raise 3`, `agents raise 2`, `guard block`, `handoff on`) are lifted
+// words (`raise 3`, `guard block`, `handoff on`) are lifted
 // out first, key first, and mix with the groups in any order.
 
 /** The thresholds a command sets live; `null` switches one off. */
 export type Settings = {
   /** `raise N|off`: the main chat's raiseAfterExpiries. */
   raise?: number | null;
-  /** `agents raise N|off`: agentRaiseAfterExpiries. */
-  agentRaise?: number | null;
-  /** `agents waiting on|off`: agentRaiseWaiting. */
-  agentWaiting?: boolean;
   /** `guard off|warn|block`: resumeGuard. */
   guard?: GuardMode;
   /** `guard floor N|Nk`: resumeGuardMinTokens. */
@@ -32,7 +28,7 @@ export type Action =
   | { kind: 'error'; message: string };
 
 export const USAGE =
-  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h · settings: raise N|off · agents raise N|off · agents waiting on|off · guard off|warn|block · guard floor N|Nk · guard price N|off · handoff on|off';
+  'usage: /cache [main|agents] 5m|1h|auto — words in any order, e.g. /cache 1h agents · /cache main 5m agents 1h · settings: raise N|off · guard off|warn|block · guard floor N|Nk · guard price N|off · handoff on|off';
 
 const PARTY_WORDS: Readonly<Record<string, readonly Party[]>> = {
   main: ['main'],
@@ -60,8 +56,6 @@ function fail(reason: string): Action {
 }
 
 const COUNT = 'a whole number of 1 or more, or off';
-
-const AGENT_WORDS: ReadonlySet<string> = new Set(['agent', 'agents', 'subagent', 'subagents', 'sub-agent', 'sub-agents']);
 
 /** Why a party word read as a setting's key cannot also be the party of a TTL beside it. */
 function keyedParty(setting: string): string {
@@ -91,26 +85,19 @@ function takeSettings(words: readonly string[]): { rest: string[]; settings: Set
     const word = words[i]!;
     const next = words[i + 1];
     const value = words[i + 2];
-    const agents = AGENT_WORDS.has(word);
     let error: string | undefined;
-    const partyLed = (word === 'main' && next === 'raise') || (agents && (next === 'raise' || next === 'waiting'));
+    const partyLed = word === 'main' && next === 'raise';
     if (partyLed) {
-      const setting = `${agents ? 'agents' : 'main'} ${next}`;
-      if (group === 'ttl-first' || group === 'party-open') return { error: keyedParty(setting) };
-      partyKey ??= setting;
+      if (group === 'ttl-first' || group === 'party-open') return { error: keyedParty('main raise') };
+      partyKey ??= 'main raise';
     }
-    if (word === 'raise' || (word === 'main' && next === 'raise') || (agents && next === 'raise')) {
-      const forAgents = word !== 'raise' && agents;
+    if (word === 'raise' || partyLed) {
       const at = word === 'raise' ? i + 1 : i + 2;
       const raw = words[at];
       const n = raw === 'off' ? null : raw === undefined ? undefined : parseCount(raw);
-      if (n === undefined) return { error: `${forAgents ? 'agents raise' : 'raise'} needs ${COUNT}` };
-      error = forAgents ? put('agentRaise', 'agents raise', n) : put('raise', 'raise', n);
+      if (n === undefined) return { error: `raise needs ${COUNT}` };
+      error = put('raise', 'raise', n);
       i = at;
-    } else if (agents && next === 'waiting') {
-      if (value !== 'on' && value !== 'off') return { error: 'agents waiting needs on or off' };
-      error = put('agentWaiting', 'agents waiting', value === 'on');
-      i += 2;
     } else if (word === 'guard') {
       if (next === 'off' || next === 'warn' || next === 'block') {
         error = put('guard', 'guard', next);

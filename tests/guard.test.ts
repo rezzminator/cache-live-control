@@ -6,7 +6,7 @@ const MIN = 60_000;
 const NOW = 1_000 * MIN;
 
 function records(entries: Record<string, Partial<AgentRecord>>): AgentRecords {
-  return new Map(Object.entries(entries).map(([id, r]) => [id, { at: NOW, ttl: 'automatic', context: 0, expired: 0, ...r } as AgentRecord]));
+  return new Map(Object.entries(entries).map(([id, r]) => [id, { at: NOW, ttl: 'automatic', context: 0, ...r } as AgentRecord]));
 }
 
 describe('constants', () => {
@@ -63,7 +63,7 @@ describe('guardVerdict', () => {
   const base: GuardInput = {
     mode: 'block',
     floor: 60_000,
-    record: { at: NOW - 20 * MIN, ttl: 'automatic', context: 187_000, expired: 0 },
+    record: { at: NOW - 20 * MIN, ttl: 'automatic', context: 187_000 },
     label: 'researcher',
     now: NOW,
     rewriteTtl: '5m',

@@ -71,10 +71,6 @@ describe('settings words: thresholds set live', () => {
     ['raise 3', { raise: 3 }],
     ['raise off', { raise: null }],
     ['main raise 2', { raise: 2 }],
-    ['agents raise 4', { agentRaise: 4 }],
-    ['sub-agents raise off', { agentRaise: null }],
-    ['agents waiting on', { agentWaiting: true }],
-    ['agents waiting off', { agentWaiting: false }],
     ['guard block', { guard: 'block' }],
     ['guard warn', { guard: 'warn' }],
     ['guard off', { guard: 'off' }],
@@ -93,9 +89,7 @@ describe('settings words: thresholds set live', () => {
   it.each<[string, Change, Settings]>([
     ['guard block main 1h', { main: '1h' }, { guard: 'block' }],
     ['main 1h guard block', { main: '1h' }, { guard: 'block' }],
-    ['main 1h agents raise 3', { main: '1h' }, { agentRaise: 3 }],
     ['raise 3 agents 5m handoff on main 1h', { agents: '5m', main: '1h' }, { raise: 3, handoff: true }],
-    ['agents raise 2 agents 1h', { agents: '1h' }, { agentRaise: 2 }],
     ['5m, guard warn, guard floor 30k', { main: '5m', agents: '5m' }, { guard: 'warn', guardFloor: 30_000 }],
     ['raise 2 raise 2', {}, { raise: 2 }],
   ])('mixes settings with TTL groups in any order: %j', (args, change, settings) => {
@@ -111,9 +105,6 @@ describe('settings words: thresholds set live', () => {
     ['raise 0', 'raise needs a whole number of 1 or more, or off'],
     ['raise two', 'raise needs a whole number of 1 or more, or off'],
     ['raise 2.5', 'raise needs a whole number of 1 or more, or off'],
-    ['agents raise', 'agents raise needs a whole number of 1 or more, or off'],
-    ['agents waiting', 'agents waiting needs on or off'],
-    ['agents waiting maybe', 'agents waiting needs on or off'],
     ['guard', 'guard needs off, warn, block, floor N or price N'],
     ['guard loud', 'guard needs off, warn, block, floor N or price N'],
     ['guard floor', 'guard floor needs a number of tokens such as 60000 or 60k'],
@@ -127,13 +118,8 @@ describe('settings words: thresholds set live', () => {
     ['guard warn guard block', 'guard is given twice'],
     ['raise 3 agents', 'agents has no TTL'],
     // A party word read as the key of a setting is no party of a TTL beside it: never widened to both parties.
-    ['1h agents raise 2', AMBIGUOUS('agents raise')],
-    ['5m agents waiting on', AMBIGUOUS('agents waiting')],
-    ['agents raise 2 1h', AMBIGUOUS('agents raise')],
     ['1h main raise 2', AMBIGUOUS('main raise')],
-    ['1h main agents raise 2', AMBIGUOUS('agents raise')],
-    ['main agents raise 2 1h', AMBIGUOUS('agents raise')],
-    ['1h agents raise 3 main', AMBIGUOUS('agents raise')],
+    ['main raise 2 1h', AMBIGUOUS('main raise')],
   ])('refuses %j, changing nothing', (args, reason) => {
     expect(parseArgs(args)).toEqual({ kind: 'error', message: `nothing changed: ${reason}; ${USAGE}` });
   });
