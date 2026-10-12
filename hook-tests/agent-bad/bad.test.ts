@@ -9,9 +9,8 @@ describe('bad options', () => {
     world(on);
     await $.session.start(START);
     const text = await cache($);
-    expect(text).toContain(' · auto-raise off · agent-raise off · resume-guard off · handoff off · ');
+    expect(text).toContain(' · auto-raise off · resume-guard off · handoff off · ');
     for (const error of [
-      'option agentRaiseAfterExpiries "0" ignored: use a whole number of 1 or more, or empty',
       'option resumeGuard "maybe" ignored: use off, warn or block',
       'option resumeGuardMinTokens "lots" ignored: use a number of tokens such as 60000 or 60k, or empty',
       'option resumeGuardPrice "-1" ignored: use a number (USD per million input tokens), or empty',

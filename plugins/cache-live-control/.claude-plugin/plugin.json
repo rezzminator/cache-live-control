@@ -1,6 +1,6 @@
 {
   "name": "cache-live-control",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
   "license": "MIT",
   "author": {
@@ -51,18 +51,6 @@
       "type": "string",
       "title": "Resume guard: base input price (optional)",
       "description": "USD per million base input tokens, such as 3 or 15. When set, the guard's text also shows the rewrite in dollars; empty shows tokens only (this plugin holds no price table).",
-      "default": ""
-    },
-    "agentRaiseWaiting": {
-      "type": "boolean",
-      "title": "Sub-agents: 1h when an agent launches background work",
-      "description": "On: while a sub-agent that launched a background sub-agent or a background shell is finishing its turn, every sub-agent request is written at 1h (they share one process-wide variable, so no agent can be raised alone), so its wake reads the cache. Costs 2x instead of 1.25x on every sub-agent cache write meanwhile. A typed /cache agents setting outranks it; FORCE_PROMPT_CACHING_5M and the main chat are never touched.",
-      "default": false
-    },
-    "agentRaiseAfterExpiries": {
-      "type": "string",
-      "title": "Sub-agents: 1h after N expired requests of one agent",
-      "description": "A whole number of 1 or more, or empty to leave it off. Once one sub-agent has found its own cache expired N times, every sub-agent request is written at 1h until that agent finishes or has been idle for an hour (same shared variable and cost as agentRaiseWaiting).",
       "default": ""
     },
     "handoff": {

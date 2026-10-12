@@ -23,12 +23,7 @@
 #           5 minutes the 2nd expired wake's own request writes 1h, the note on
 #           that prompt names 1 hour, /cache says fired, and the next request
 #           stays 1h (two real waits of 5.5 minutes)
-#   (h)     a fifth session with agentRaiseWaiting: a background sub-agent (the
-#           lead) launches a background child that sleeps 320s and ends its turn;
-#           that turn-ending request writes 1h (the lead's first request, before
-#           the launch, wrote 5m), and its wake, past the 5m TTL, reads that
-#           cache and rewrites at most a tenth of it
-#   (i)     a sixth session with resumeGuard=block and a 1000-token floor: a worker
+#   (h)     a fifth session with resumeGuard=block and a 1000-token floor: a worker
 #           finishes and goes cold (330s); a SendMessage to it is refused with
 #           the gap and the override, and never reaches it; one beginning
 #           [resume-anyway] reaches it with the marker removed; the next one,
@@ -324,80 +319,39 @@ note_before_r3() {
 r3_note=$(note_before_r3 "$F4")
 u_r1=$(usage_of "$F4" R1); u_r2=$(usage_of "$F4" R2); u_r3=$(usage_of "$F4" R3); u_r4=$(usage_of "$F4" R4)
 
-# (h) The agents' raise, (i) the cold-resume guard. A sub-agent's requests, in
-# order, one line each: "<epoch> read=N w5m=N w1h=N tools=a,b text=...", the
-# tools of a background launch spelled "Agent(bg)" or "Bash(bg)". A streamed
+# (h) The cold-resume guard. A sub-agent's requests, in
+# order, one line each: "<epoch> read=N w5m=N w1h=N text=...". A streamed
 # message is several lines with one id: its usage is the first line's.
 agent_requests() {
   jq -r -s 'reduce (.[] | select(.type == "assistant" and .message.usage)) as $r ({order: [], by: {}};
       ($r.message.id) as $id
-      | if .by[$id] == null then .order += [$id] | .by[$id] = {usage: $r.message.usage, ts: $r.timestamp, tools: [], text: ""} else . end
-      | .by[$id].tools += [$r.message.content[]? | select(.type == "tool_use") | .name + (if .input.run_in_background == true then "(bg)" else "" end)]
+      | if .by[$id] == null then .order += [$id] | .by[$id] = {usage: $r.message.usage, ts: $r.timestamp, text: ""} else . end
       | .by[$id].text += ([$r.message.content[]? | select(.type == "text") | .text] | join(" ")))
     | .order[] as $id | .by[$id]
-    | "\(.ts | sub("\\.[0-9]+"; "") | fromdate) read=\(.usage.cache_read_input_tokens // 0) w5m=\(.usage.cache_creation.ephemeral_5m_input_tokens // 0) w1h=\(.usage.cache_creation.ephemeral_1h_input_tokens // 0) tools=\(.tools | join(",")) text=\(.text | gsub("[\\n ]+"; "_") | .[0:30])"' "$1"
-}
-bucket_of() {
-  local w5 w1; w5=$(field w5m "$1"); w1=$(field w1h "$1")
-  if [ "${w1:-0}" -gt 0 ] && [ "${w5:-0}" -gt 0 ]; then echo mixed; elif [ "${w1:-0}" -gt 0 ]; then echo 1h; elif [ "${w5:-0}" -gt 0 ]; then echo 5m; else echo none; fi
+    | "\(.ts | sub("\\.[0-9]+"; "") | fromdate) read=\(.usage.cache_read_input_tokens // 0) w5m=\(.usage.cache_creation.ephemeral_5m_input_tokens // 0) w1h=\(.usage.cache_creation.ephemeral_1h_input_tokens // 0) text=\(.text | gsub("[\\n ]+"; "_") | .[0:30])"' "$1"
 }
 # The current session's sub-agent transcripts.
 sub_dir() { echo "$(dirname "$(transcript)")/$ID/subagents"; }
-# The sub-agent transcript whose prompt holds "exactly: $1" (the lead: the one that launched a background Agent).
+# The sub-agent transcript whose prompt holds "exactly: $1".
 sub_file() {
   local f
   for f in "$(sub_dir)"/*.jsonl; do
     [ -f "$f" ] || continue
-    grep -q "exactly: $1" "$f" && { [ -z "${2:-}" ] || agent_requests "$f" | grep -q -E 'tools=[^ ]*(Agent|Task)\(bg\)'; } && { echo "$f"; return 0; }
+    grep -q "exactly: $1" "$f" && { echo "$f"; return 0; }
   done
 }
-# Waits until that sub-agent's reply holds the label, as text or as the report it hands back ($1 finds its file, $2 the reply, $3 seconds, $4 set: the lead).
+# Waits until that sub-agent's reply holds the label, as text or as the report it hands back ($1 finds its file, $2 the reply, $3 seconds).
 wait_sub() {
   local f
   for _ in $(seq 1 $(( $3 / 5 ))); do
     sleep 5
-    f=$(sub_file "$1" "${4:-}")
+    f=$(sub_file "$1")
     [ -n "$f" ] && jq -e --arg l "$2" 'select(.type == "assistant") | .message.content[]? | select(.type == "text" or .type == "tool_use") | (if .type == "text" then .text else (.input | tostring) end) | select(contains($l))' "$f" >/dev/null 2>&1 && { log "sub-agent said $2"; return 0; }
   done
   echo "ERROR sub-agent reply $2 not seen; pane in $RUN/pane.txt"; exit 2
 }
 
-# (h) A lead launches a background child that sleeps 320s, then ends its turn: that
-# request is written at 1h, and the wake (after the child's notice, past the 5m
-# TTL) reads it. The lead is a background agent of the main chat, so the main
-# chat's reply does not wait on it.
-cat > "$RUN/settings-agents.json" <<'EOF3'
-{ "pluginConfigs": { "cache-live-control@inline": { "options": { "mainTtl": "5m", "agentRaiseWaiting": true } } } }
-EOF3
-ID=$(uuidgen | tr 'A-Z' 'a-z')
-echo "agent-raise session: $ID (the background child sleeps 320s)"
-start "$ID" "" "$RUN/settings-agents.json"
-# The arguments are spelled out, so the main chat's model passes the lead's
-# prompt on as written instead of folding the lead and its child into one agent.
-turn 'Call the Agent tool once with exactly these arguments: {"subagent_type":"general-purpose","run_in_background":true,"description":"lead","prompt":"Call the Agent tool once with subagent_type general-purpose, run_in_background true and this prompt: Call the Bash tool once with command python3 -c '"'"'import time; time.sleep(320)'"'"' and timeout 400000, then reply with exactly: C1. As soon as that Agent call returns, end your turn by replying with exactly: H1, and call no other tool. When the child completion notice arrives, reply with exactly: H2."}. Then reply with exactly: H0' H0 120
-# The lead must have launched its child, or the model did not follow the prompt.
-for _ in $(seq 1 18); do sleep 5; [ -n "$(sub_file H1 lead)" ] && break; done
-[ -n "$(sub_file H1 lead)" ] || { echo "ERROR no sub-agent launched a background child; the main chat's model did not pass the lead's prompt on; transcripts in $RUN"; exit 2; }
-wait_sub H1 H2 540 lead
-sleep 10
-command_row "/cache"
-F5=$(transcript)
-[ -n "$F5" ] || { echo "ERROR no transcript for $ID under $PROJECTS"; exit 2; }
-cp "$F5" "$RUN/agents.jsonl"
-cp -R "$(sub_dir)" "$RUN/subagents-agents"
-LEAD=$(sub_file H1 lead)
-lead_rows=$(agent_requests "$LEAD")
-echo "$lead_rows" > "$RUN/lead-requests.txt"
-l0_n=$(grep -n -E 'tools=[^ ]*(Agent|Task)\(bg\)' <<<"$lead_rows" | head -1 | cut -d: -f1)
-l0=$(sed -n "${l0_n:-0}p" <<<"$lead_rows"); l1=$(sed -n "$((${l0_n:-0} + 1))p" <<<"$lead_rows"); lw=$(sed -n "$((${l0_n:-0} + 2))p" <<<"$lead_rows")
-lead_n=$(grep -c . <<<"$lead_rows")
-ctx1=$(( $(field read "$l1") + $(field w5m "$l1") + $(field w1h "$l1") ))
-readw=$(field read "$lw"); writew=$(( $(field w5m "$lw") + $(field w1h "$lw") ))
-lead_gap=$(( $(awk '{print $1}' <<<"$lw") - $(awk '{print $1}' <<<"$l1") ))
-wake_ok=$([ "$ctx1" -gt 0 ] && [ $(( readw * 100 )) -ge $(( ctx1 * 95 )) ] && [ $(( writew * 10 )) -le "$ctx1" ] && echo yes || echo no)
-outputs5=$(outputs "$F5")
-
-# (i) A worker finishes, its cache goes cold, and the guard (block, floor 1000
+# (h) A worker finishes, its cache goes cold, and the guard (block, floor 1000
 # tokens) refuses a SendMessage to it; [resume-anyway] sends it, marker removed;
 # a second message right after, to the now warm worker, passes.
 cat > "$RUN/settings-guard.json" <<'EOF4'
@@ -470,19 +424,14 @@ row "(g) R3 2nd expired wake: its own request" 1h "$(of "$raise_rows" R3)"
 row "(g) R3 prompt carries the note naming 1 hour" yes "$r3_note"
 row "(g) /cache after R3 says fired" yes "$(grep -q 'auto-raise fired' <<<"$outputs4" && echo yes)"
 row "(g) R4 next request stays" 1h "$(of "$raise_rows" R4)"
-row "(h) lead before it launches the child" 5m "$(bucket_of "$l0")"
-row "(h) lead's turn-ending request (raised)" 1h "$(bucket_of "$l1")"
-row "(h) the wake came past the 5m TTL (>= 300s)" yes "$([ "$lead_gap" -ge 300 ] && echo yes)"
-row "(h) the wake read that cache, wrote <= 10%" yes "$wake_ok"
-row "(h) /cache shows the raise and hand-back" yes "$(grep -q 'raised the agents to 1h for' <<<"$outputs5" && grep -q 'handed the agents variable back' <<<"$outputs5" && echo yes)"
-row "(i) the cold SendMessage was refused, once" 1 "$deny_count"
-row "(i) the refusal names the gap, the override" yes "$(grep -q 'has been idle .*prompt cache expired .*\[resume-anyway\]' <<<"$deny_full" && echo yes)"
-row "(i) the refused message never reached it" 0 "$(g_count 'exactly: G2')"
-row "(i) [resume-anyway] message reached it" yes "$([ "$(g_count 'exactly: G4')" -ge 1 ] && echo yes)"
-row "(i) ... with the marker removed" 0 "$(g_count 'resume-anyway')"
-row "(i) the warm SendMessage reached it" yes "$([ "$(g_count 'exactly: G6')" -ge 1 ] && echo yes)"
-row "(i) the warm resume read its cache" yes "$warm_ok"
-row "(i) /cache shows the block and override" yes "$(grep -q 'blocked a resume of' <<<"$outputs6" && grep -q 'anyway' <<<"$outputs6" && echo yes)"
+row "(h) the cold SendMessage was refused, once" 1 "$deny_count"
+row "(h) the refusal names the gap, the override" yes "$(grep -q 'has been idle .*prompt cache expired .*\[resume-anyway\]' <<<"$deny_full" && echo yes)"
+row "(h) the refused message never reached it" 0 "$(g_count 'exactly: G2')"
+row "(h) [resume-anyway] message reached it" yes "$([ "$(g_count 'exactly: G4')" -ge 1 ] && echo yes)"
+row "(h) ... with the marker removed" 0 "$(g_count 'resume-anyway')"
+row "(h) the warm SendMessage reached it" yes "$([ "$(g_count 'exactly: G6')" -ge 1 ] && echo yes)"
+row "(h) the warm resume read its cache" yes "$warm_ok"
+row "(h) /cache shows the block and override" yes "$(grep -q 'blocked a resume of' <<<"$outputs6" && grep -q 'anyway' <<<"$outputs6" && echo yes)"
 u1=$(usage_of "$F" T1); u2=$(usage_of "$F" T2); u3=$(usage_of "$F" T3)
 info() { printf '| %-44s | %-6s | %-12s | %s |\n' "$1" "-" "$2" "INFO"; }
 info "premise: T2 read after 5m -> 1h" "$(field read "$u2")"
@@ -495,9 +444,8 @@ info "(f) transcript: output before the answer" "$([ -n "$f_cmd_ts" ] && [[ "$f_
 info "(f) first toast frame" "${t_frame:-none} at ${t_time:-none} (${t_marker:-no marker})"
 info "(f) reply line frame" "${f_frame:-none} at ${f_time:-none}"
 info "(f) running marker before the switch" "${run_marker:-none}"
-info "(h) lead requests; wake gap; L1 context; wake read/write" "$lead_n; ${lead_gap}s; $ctx1; $readw/$writew"
-info "(i) cold resume (no guard) wrote of its context" "$cold_write of $gctx2"
-info "(i) refusal text" "${deny_text:-none}"
+info "(h) cold resume (no guard) wrote of its context" "$cold_write of $gctx2"
+info "(h) refusal text" "${deny_text:-none}"
 echo
 echo "premise, first request of each turn (tokens):"
 echo "  raise 5m -> 1h:  T1 (5m) $u1 · T2 (1h) $u2"
@@ -512,6 +460,6 @@ echo "  warning line: ${f_line:-none}"
 echo "toast frame: $RUN/midturn-frames/${t_frame:-none}.txt"
 echo "  toast text: ${t_line:-none}"
 echo
-echo "command output rows:"; outputs "$F" "$F2" "$F3" "$F4" "$F5" "$F6" | sed 's/^/  /'
+echo "command output rows:"; outputs "$F" "$F2" "$F3" "$F4" "$F6" | sed 's/^/  /'
 echo "evidence: $RUN"
 exit $fail

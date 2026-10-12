@@ -3,10 +3,11 @@ import { isTtl, PARTIES, type Party, type Ttl } from './ttl.ts';
 
 // The plugin's `userConfig`: a starting TTL per party, applied at session start
 // unless a variable or a launcher's handoff (handoff.ts) comes first, and the
-// opt-in TTL notice to the main chat (notice.ts), the auto-raise to 1h after N
-// expired wake-ups (raise.ts), and the sub-agent cache protection: the agents'
-// auto-raise (agentraise.ts), the cold-resume guard (guard.ts) and the agent
-// handoff (agenthandoff.ts). Every one is off unless set.
+// opt-in TTL notice to the main chat (notice.ts), the main chat's auto-raise to
+// 1h after N expired wake-ups (raise.ts), and the sub-agent cache protection:
+// the cold-resume guard (guard.ts) and the agent handoff (agenthandoff.ts).
+// Every one is off unless set. No option raises the sub-agents' TTL: they run
+// 5m unless `subagentTtl`, a typed `/cache agents` or an agent's own frontmatter says otherwise.
 
 export const OPTION: Readonly<Record<Party, string>> = { main: 'mainTtl', agents: 'subagentTtl' };
 
@@ -23,10 +24,6 @@ export type ResolvedOptions = {
   guardFloor?: number;
   /** resumeGuardPrice: USD per million base input tokens. */
   guardPrice?: number;
-  /** agentRaiseWaiting: hold the agents at 1h while an agent waits on background work; absent when off. */
-  agentRaiseWaiting?: true;
-  /** agentRaiseAfterExpiries: expired requests of one agent before the agents are held at 1h for it; absent when off. */
-  agentRaiseAfter?: number;
   /** handoff: ask each spawned sub-agent for a handoff file; absent when off. */
   handoff?: true;
   /** handoffDir: where those files go; absent for the plugin's own data directory. */
@@ -83,12 +80,11 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>): Reso
   }
   if (readFlag(options, 'ttlNotice', out.errors)) out.notice = true;
 
-  for (const [name, key] of [['raiseAfterExpiries', 'raiseAfter'], ['agentRaiseAfterExpiries', 'agentRaiseAfter']] as const) {
-    const raw = options[name];
-    if (isEmpty(raw)) continue;
-    const n = parseCount(raw);
-    if (n !== undefined) out[key] = n;
-    else out.errors.push(`option ${name} ${JSON.stringify(raw)} ignored: use a whole number of 1 or more, or empty`);
+  const raiseAfter = options['raiseAfterExpiries'];
+  if (!isEmpty(raiseAfter)) {
+    const n = parseCount(raiseAfter);
+    if (n !== undefined) out.raiseAfter = n;
+    else out.errors.push(`option raiseAfterExpiries ${JSON.stringify(raiseAfter)} ignored: use a whole number of 1 or more, or empty`);
   }
 
   const guard = options['resumeGuard'];
@@ -110,7 +106,6 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>): Reso
     else out.errors.push(`option resumeGuardPrice ${JSON.stringify(price)} ignored: use a number (USD per million input tokens), or empty`);
   }
 
-  if (readFlag(options, 'agentRaiseWaiting', out.errors)) out.agentRaiseWaiting = true;
   if (readFlag(options, 'handoff', out.errors)) out.handoff = true;
 
   const dir = options['handoffDir'];

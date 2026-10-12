@@ -4,7 +4,7 @@ import { AGENTS, cache, MAIN, MIN, segment, START, world } from '../world.ts';
 // Run by scripts/test-hook-variants.sh with the manifest defaults: every piece
 // starts off, and /cache sets each threshold live.
 
-const OFF = 'auto-raise off · agent-raise off · resume-guard off · handoff off';
+const OFF = 'auto-raise off · resume-guard off · handoff off';
 const INFO = { description: 'd', type: 'general-purpose' } as const;
 
 describe('everything starts off', () => {
@@ -150,7 +150,7 @@ describe('what the guard must not do', () => {
   });
 });
 
-describe('a sub-agent request with the agents\' reactive raise off', () => {
+describe('a sub-agent request', () => {
   test('is not held: it reaches the model while its record is still being noted', async ($, on) => {
     const w = world(on);
     await $.session.start(START);
@@ -187,24 +187,6 @@ describe('/cache raise N|off: the main chat\'s raise, set live', () => {
     expect(w.requests).toEqual(['5m', '1h']);
     expect(await cache($, 'raise off')).toBe('auto-raise off');
     expect(await cache($, 'raise 4')).toBe('auto-raise idle: main is 1h');
-  });
-});
-
-describe('/cache agents raise, agents waiting: the agents\' raise, set live', () => {
-  test('an agent that launches a background child holds the agents at 1h until its turn ends', async ($, on) => {
-    const w = world(on);
-    await $.session.start(START);
-    expect(await cache($, 'agents waiting on agents raise 2')).toBe('agent-raise ready (waiting, after 2 expiries)');
-    const lead = await w.spawn($, { name: 'lead' });
-    await w.agentStep($, lead);
-    await w.spawn($, { parentAgentId: lead, background: true });
-    expect(w.env.get(AGENTS)).toBe('1h');
-    await w.agentStep($, lead);
-    expect(w.agentRequests.map((r) => r.ttl)).toEqual([undefined, '1h']);
-    await w.agentComplete($, lead);
-    expect(w.env.get(AGENTS)).toBeUndefined();
-    expect(await cache($, 'agents waiting off agents raise off')).toBe('agent-raise off');
-    expect(w.sets.filter((s) => s.name === MAIN)).toEqual([]);
   });
 });
 
