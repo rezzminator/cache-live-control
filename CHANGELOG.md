@@ -2,6 +2,17 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+### Added
+- `summaries` option (`block`; `allow` or empty = Claude Code's behaviour, the default) and `/cache summaries off|on`: stop Claude Code's sub-agent progress summaries, a full-context request about every 30 s per running sub-agent whose reply only feeds the agent panel, while fork mode and background sub-agents stay on. The plugin adds the header `x-cache-live-control-summaries: block` to `ANTHROPIC_CUSTOM_HEADERS` (the user's own lines stay) and a gateway on `ANTHROPIC_BASE_URL` that honours it answers the request itself; without such a gateway the switch changes nothing. `/cache` shows a `summaries` segment.
+
+### Removed
+- Breaking, so the next release is a major: the agent handoff: the options `handoff` and `handoffDir`, the word `/cache handoff on|off` and its argument hint, the `handoff` segment of `/cache`, the instruction appended to each spawned sub-agent's prompt, and the resume guard's pointer to a handoff file (the guard itself stays and names no file). To migrate, delete both options from `pluginConfigs`; files already written stay where they are and nothing reads them. The launcher handoff (`CACHE_LIVE_CONTROL_MAIN_TTL`, `CACHE_LIVE_CONTROL_AGENTS_TTL`) is a different feature and stays.
+
+### Changed
+- `/cache` status lines carry `summaries on` where they carried `handoff off`.
+
 ## [0.4.1] — 2026-10-12
 
 ### Removed

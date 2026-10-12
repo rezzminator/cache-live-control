@@ -88,14 +88,12 @@ describe('guardVerdict', () => {
     }
   });
 
-  it('prices the rewrite only when a price is set, and points to the handoff file when one is named', () => {
-    const v = guardVerdict({ ...base, price: 3, handoff: '/h/tu1.md' });
+  it('prices the rewrite only when a price is set', () => {
+    const v = guardVerdict({ ...base, price: 3 });
     expect(v).toMatchObject({ kind: 'block' });
-    if (v.kind === 'block') {
-      expect(v.text).toContain('= ~234k input-token equivalents ($0.70 at $3/M base input). A handoff for it is at /h/tu1.md: spawn a fresh agent from it instead of resuming. Not sent.');
-    }
+    if (v.kind === 'block') expect(v.text).toContain('= ~234k input-token equivalents ($0.70 at $3/M base input). Not sent.');
     const plain = guardVerdict(base);
-    if (plain.kind === 'block') expect(plain.text).not.toMatch(/\$|handoff/);
+    if (plain.kind === 'block') expect(plain.text).not.toMatch(/\$/);
   });
 
   it('multiplies by 2 for a rewrite at 1h and names the TTL the record was written at', () => {

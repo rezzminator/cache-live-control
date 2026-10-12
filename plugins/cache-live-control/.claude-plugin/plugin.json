@@ -53,16 +53,10 @@
       "description": "USD per million base input tokens, such as 3 or 15. When set, the guard's text also shows the rewrite in dollars; empty shows tokens only (this plugin holds no price table).",
       "default": ""
     },
-    "handoff": {
-      "type": "boolean",
-      "title": "Sub-agents: ask for a handoff file",
-      "description": "On: every sub-agent's prompt gets a short instruction to write a handoff (state, decisions, next steps, file:line anchors, open questions) to a file before its final answer; the resume guard then points to that file, so a fresh agent can start from it instead of resuming a cold one.",
-      "default": false
-    },
-    "handoffDir": {
+    "summaries": {
       "type": "string",
-      "title": "Handoff files: directory",
-      "description": "Where handoff files go, as an absolute path (a relative one is ignored). Empty uses this plugin's own data directory (<Claude config dir>/plugins/data/<plugin>-<marketplace>/handoffs).",
+      "title": "Sub-agents: progress summaries",
+      "description": "block: while a sub-agent runs, Claude Code asks its model for a 3-5 word status line about every 30 s over the agent's whole conversation, and this plugin marks every request (header x-cache-live-control-summaries: block, through ANTHROPIC_CUSTOM_HEADERS) so a gateway on ANTHROPIC_BASE_URL that honours the mark answers it itself; without such a gateway the mark changes nothing. allow or empty keeps Claude Code's behaviour. /cache summaries off|on switches it live.",
       "default": ""
     }
   }

@@ -13,7 +13,7 @@
 </div>
 
 ```text
-/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold) · auto-raise off · resume-guard off · handoff off
+/cache                →  cache-live-control: main 1h (set at launch, warm 41m) · agents automatic (5m, unless subagentPromptCacheTtl or the agent's frontmatter sets it, cold) · auto-raise off · resume-guard off · summaries on
 /cache 1h agents      →  cache-live-control: main 1h · agents 1h
 /cache main 5m        →  cache-live-control: switched; main's cache was warm (41m left), the next request may rewrite it: main 5m · agents 1h
 /cache auto main      →  cache-live-control: main automatic · agents 1h
@@ -45,10 +45,13 @@ environment variables and settings read at launch.
 - 🧊 **Sub-agent cache protection, all opt-in.** A sub-agent whose cache
   expired re-writes its whole context at its next request. The plugin
   [warns or blocks](#-sub-agent-cache-protection) a `SendMessage` to a cold, large sub-agent
-  (naming the cost in tokens) and can ask each sub-agent for a handoff file
-  to start a fresh agent from. Every threshold is set live:
-  `/cache guard block`, `/cache handoff on`. Nothing raises a sub-agent's
-  TTL on its own.
+  (naming the cost in tokens). Every threshold is set live:
+  `/cache guard block`. Nothing raises a sub-agent's TTL on its own.
+- 🔇 **Sub-agent progress summaries, opt-in.** While a sub-agent runs, Claude
+  Code asks its model, about every 30 s over the agent's whole conversation,
+  for a 3-5 word status line. `/cache summaries off` marks every request so a
+  [gateway that honours the mark](#sub-agent-progress-summaries) answers that
+  request itself; fork mode and background sub-agents are untouched.
 - 🧭 **Status with sources.** `/cache` alone shows each TTL, where it
   comes from and whether its cache is warm, and warns when `FORCE_PROMPT_CACHING_5M` overrides everything.
 - 🔒 **This chat only.** Nothing is written to a settings file; another chat,
@@ -119,10 +122,11 @@ applies the settings beside it, and the reply says both.
 | `/cache guard off` / `warn` / `block` | the cold-resume guard | `resumeGuard` |
 | `/cache guard floor N` (`60000`, `60k`, `1.5k`) | the context below which a cold resume passes | `resumeGuardMinTokens` |
 | `/cache guard price N` / `price off` | USD per million base input tokens, to show dollars | `resumeGuardPrice` |
-| `/cache handoff on` / `off` | ask each spawned sub-agent for a handoff file | `handoff` |
+| `/cache summaries off` / `on` | stop the sub-agent progress summaries (needs a gateway, [below](#sub-agent-progress-summaries)) / keep Claude Code's | `summaries` (`block` / `allow`) |
 
 Each word replaces the option's value for this chat; the option stays what
-starts the next one.
+starts the next one, and a plugin reload starts again from the options
+(with `summaries` at `block`, a reload puts the mark back after a typed `on`).
 
 ## 🔥 Warm-cache warning
 
@@ -215,8 +219,7 @@ ignores options under any other key.
 | `resumeGuard` | empty (off) | `off`, `warn` or `block`: what to do with a `SendMessage` to a cold, large sub-agent ([below](#-sub-agent-cache-protection)). |
 | `resumeGuardMinTokens` | `60000` | The context, in tokens (`60000` or `60k`), below which a cold resume passes: it costs about what a fresh agent does. |
 | `resumeGuardPrice` | empty | USD per million base input tokens. Set it to see dollars beside the tokens; the plugin owns no price table. |
-| `handoff` | `false` | Append a short instruction to each spawned sub-agent's prompt to write a handoff file before its final answer. |
-| `handoffDir` | empty | Where those files go, an absolute path (a relative one is ignored and named by `/cache`); empty means the plugin's own data directory. |
+| `summaries` | empty (allow) | `block`, `allow` or empty: `block` starts the session with the sub-agent progress summaries stopped ([below](#sub-agent-progress-summaries)); empty or `allow` keeps Claude Code's behaviour. |
 
 An option applies once, when the session starts, and never over a variable
 already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h)
@@ -350,8 +353,8 @@ The plugin keeps one record per sub-agent, in memory and bounded (256, the
 agent that asked longest ago goes first; with no guard, an agent whose cache
 can no longer be warm is forgotten): when its latest request went out, the
 TTL the agents' variable held then, its context (`input + cache read + cache
-creation + output` of its latest response), and the spawn call, name and
-parent it came from. A record feeds the guard and the handoff. A plugin reload or a resumed session starts with none, and an
+creation + output` of its latest response), and the name and parent it
+came from. A record feeds the guard. A plugin reload or a resumed session starts with none, and an
 agent with no record is never guarded.
 
 ### Cold-resume guard
@@ -389,29 +392,35 @@ agent researcher has been idle 20m and its prompt cache expired 15m ago (it was 
 - Dollars appear only with `resumeGuardPrice` (`$0.70` above is 234k tokens
   at `3`). The plugin owns no price table, and the number is the base input
   price you give it, times the multiplier.
-- With `handoff` on and the agent's handoff file present, the text adds
-  `A handoff for it is at <path>: spawn a fresh agent from it instead of resuming.`
 - A check that cannot run (the clock or the agent list failed) sends the
   message and `/cache` shows `could not check a resume of …: <reason>`.
 
-### Handoff
+### Sub-agent progress summaries
 
-With `handoff` on, each spawned sub-agent's prompt gets a short, neutral
-instruction appended: before its final answer, write a handoff to a file
-(the state of the work, decisions made and alternatives rejected, next steps,
-`file:line` anchors, open questions) so a fresh agent can continue without its
-context, and to say so in one line if it cannot write it. The agent's own id
-is known only after the spawn returns, so the file is named by the id of the
-`Agent` tool call that spawned it: `<handoffDir>/<tool call id>.md`. With
-`handoffDir` empty the directory is the plugin's own data directory:
-`<plugins>/data/<plugin>-<marketplace>/handoffs` for an installed plugin,
-`<config dir>/plugins/data/cache-live-control-inline/handoffs` for one loaded
-with `--plugin-dir` (`<config dir>` is `CLAUDE_CONFIG_DIR`, else `~/.claude`;
-a relative one is not used, since the agent and the plugin would read it
-against different directories).
-When neither is known, `/cache` says `handoff on, no directory: set
-handoffDir` and no prompt is changed. The guard points to the file only once
-it exists.
+While a sub-agent runs, Claude Code forks its whole conversation about every
+30 s (tools denied, one turn) and asks the model to describe the agent's latest
+action in 3-5 words; the reply only feeds the agent panel's one-line status.
+With several background sub-agents that is a steady stream of full-context
+requests, and the setting that turns it off (`CLAUDE_CODE_FORK_SUBAGENT=false`)
+also turns off fork mode and background sub-agents. No hook sees the request,
+so the plugin cannot drop it itself.
+
+`summaries` (`block`; `allow` or empty is Claude Code's behaviour, the default)
+and `/cache summaries off|on` instead mark every request: the plugin adds the
+line `x-cache-live-control-summaries: block` to `ANTHROPIC_CUSTOM_HEADERS`
+(Claude Code re-reads it for each request, mid-session and for sub-agents
+alike, measured on Claude Code 2.1.296; your other lines stay, and every line
+of the mark's name is the plugin's: `off` replaces it and `on` removes it,
+even one set at launch) and a gateway on `ANTHROPIC_BASE_URL` that honours the mark
+answers the summary request itself, so it never reaches the API. A gateway that
+does not read the mark changes nothing: the switch then costs and saves
+nothing, and `/cache` shows only what the variable holds. A refused write at session
+start is named by `/cache`. The mark is the
+plugin's whole contract with a gateway; one that honours it is
+[gpt-gateway](https://github.com/rezzminator/gpt-gateway)'s `status_label`
+with its setting `answer` at `marked`. Measured on Claude Code 2.1.296: the
+request never passes the `turn.step` hook, which sees only a turn's own
+requests, so a hook alone cannot stop it.
 
 ### Status
 
@@ -419,13 +428,13 @@ it exists.
 first:
 
 ```text
-… · auto-raise off · resume-guard block (floor 60k, $3/M) · handoff on (/data/handoffs) · recent: blocked a resume of researcher (~187k tokens) 1m ago; resumed worker anyway 2m ago
+… · auto-raise off · resume-guard block (floor 60k, $3/M) · summaries on · recent: blocked a resume of researcher (~187k tokens) 1m ago; resumed worker anyway 2m ago
 ```
 
 | Segment | When |
 | --- | --- |
 | `resume-guard off` / `warn (floor 60k)` / `block (floor 60k, $3/M)` | the guard's mode, floor and price |
-| `handoff off` / `on (<dir>)` / `on, no directory: set handoffDir` | the handoff option |
+| `summaries on` / `off (sends x-cache-live-control-summaries: block; …)` | whether `ANTHROPIC_CUSTOM_HEADERS` holds `x-cache-live-control-summaries: block` now, whoever set it |
 | `recent: …` | the last events: `blocked a resume of X (~187k tokens)`, `warned about a resume of X …`, `resumed X anyway`, `could not check a resume of X: …` |
 
 A bad value of any of these options is ignored, named by `/cache`, and leaves
@@ -531,15 +540,15 @@ Work lands on `develop`; `main` holds only releases, and each one is tagged `cac
 | `ttl.ts` | The TTL values, the two parties and their variables |
 | `parse.ts` | `/cache` words, in any order, to an action: TTL groups and the settings words |
 | `status.ts` | Each party's TTL and source, and the lines `/cache` prints |
-| `options.ts` | Every option (`mainTtl`, `subagentTtl`, `ttlNotice`, `raiseAfterExpiries`, the guard and the handoff), read and checked |
+| `options.ts` | Every option (`mainTtl`, `subagentTtl`, `ttlNotice`, `raiseAfterExpiries`, the guard and the summaries), read and checked |
 | `notice.ts` | The `ttlNotice` note: the main TTL it names, its text, and which compaction takes it out |
 | `handoff.ts` | Session start: a launch variable, a launcher's handoff variable, then the option, per party |
 | `warmth.ts` | Each party's latest request, whether its cache is warm, and the warning a switch of a warm cache prints |
 | `raise.ts` | The auto-raise: the expired-wake count, when it fires, what a `/cache` command, a compaction and a `/clear` do to it, and the status segment |
 | `launch.ts` | `ENABLE_PROMPT_CACHING_1H` at launch: its 1h kept for the main chat only, so sub-agents default to 5m |
-| `agents.ts` | The per-agent records: latest request, TTL, context, spawn; their bounds |
+| `agents.ts` | The per-agent records: latest request, TTL, context, name and parent; their bounds |
 | `guard.ts` | The cold-resume guard: the target, the override marker, the verdict and its text, the TTL a resume writes at |
-| `agenthandoff.ts` | The handoff instruction, the file named by the spawn call, the default directory |
+| `summaries.ts` | The mark in `ANTHROPIC_CUSTOM_HEADERS`: adding and removing the line, reading it back, its status segment |
 | `events.ts` | The short log `/cache` shows beside the protection pieces |
 
 ## 🎓 Built with Professor

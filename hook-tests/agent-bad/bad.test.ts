@@ -9,7 +9,7 @@ describe('bad options', () => {
     world(on);
     await $.session.start(START);
     const text = await cache($);
-    expect(text).toContain(' · auto-raise off · resume-guard off · handoff off · ');
+    expect(text).toContain(' · auto-raise off · resume-guard off · summaries on · ');
     for (const error of [
       'option resumeGuard "maybe" ignored: use off, warn or block',
       'option resumeGuardMinTokens "lots" ignored: use a number of tokens such as 60000 or 60k, or empty',

@@ -15,6 +15,6 @@ describe('a bad raiseAfterExpiries', () => {
     }
     expect(w.requests).toEqual(['5m', '5m', '5m', '5m']);
     expect(w.env.get(MAIN)).toBe('5m');
-    expect(await cache($)).toMatch(/ · auto-raise off · resume-guard off · handoff off · option raiseAfterExpiries "abc" ignored: use a whole number of 1 or more, or empty$/);
+    expect(await cache($)).toMatch(/ · auto-raise off · resume-guard off · summaries on · option raiseAfterExpiries "abc" ignored: use a whole number of 1 or more, or empty$/);
   });
 });

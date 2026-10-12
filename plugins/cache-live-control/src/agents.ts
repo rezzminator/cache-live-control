@@ -3,8 +3,7 @@ import { warmForMs } from './warmth.ts';
 
 // One record per sub-agent: when its latest request went out, the TTL its
 // variable held, and the size of its context. They feed the resume guard
-// (a SendMessage to a cold, large agent) and the handoff (which spawn an agent
-// came from).
+// (a SendMessage to a cold, large agent).
 
 export type AgentRecord = {
   /** When the agent's latest request went out. */
@@ -15,8 +14,6 @@ export type AgentRecord = {
   context: number;
   /** Spawned but not yet seen requesting: `at` is the spawn, which wrote no cache. */
   pending?: true;
-  /** The Agent tool call that started it. */
-  spawn?: string;
   name?: string;
   parentId?: string;
 };
@@ -49,11 +46,11 @@ export function noteUsage(records: AgentRecords, id: string, context: number): A
   return new Map(records).set(id, { ...before, context });
 }
 
-/** An agent was spawned: its id, the spawn call, its name and its parent. */
-export function noteSpawn(records: AgentRecords, id: string, info: { spawn: string; name?: string; parentId?: string; at: number }): AgentRecords {
+/** An agent was spawned: its id, its name and its parent. */
+export function noteSpawn(records: AgentRecords, id: string, info: { name?: string; parentId?: string; at: number }): AgentRecords {
   // The agent's first request may have gone out before the spawn returned its id.
   const before = records.get(id) ?? { at: info.at, ttl: 'automatic' as const, context: 0, pending: true as const };
-  const next: AgentRecord = { ...before, spawn: info.spawn };
+  const next: AgentRecord = { ...before };
   if (info.name !== undefined) next.name = info.name;
   if (info.parentId !== undefined) next.parentId = info.parentId;
   return new Map(records).set(id, next);
