@@ -5,7 +5,7 @@
 **Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache main 1h`, `/cache 1h agents`, words in any order, for the main chat, its sub-agents or both, with a one-line warning when a switch touches a warm cache.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Tests](https://img.shields.io/badge/tests-234%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -560,3 +560,15 @@ cache-live-control is built and maintained with [Professor](https://github.com/r
 MIT
 
 <sub>Keywords: Claude Code prompt cache TTL · prompt caching 1 hour · 5 minute cache · CLAUDE_CODE_PROMPT_CACHE_TTL · CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL · promptCacheTtl · subagentPromptCacheTtl · ENABLE_PROMPT_CACHING_1H · FORCE_PROMPT_CACHING_5M · sub-agent cache · Claude Code plugin · function hooks · Claude Mods · token cost</sub>
+
+
+## Logs
+
+Errors, warnings and session-start readiness are appended to
+`$PLUGIN_LOG_DIR/cache-live-control/{errors,warnings,info}.jsonl`.
+When `PLUGIN_LOG_DIR` is unset, they go to
+`$HOME/.local/state/cache-live-control/logs/`. Each JSONL row names its event,
+component and session when known. Files past 20 MiB move aside to `.1` on
+write, with a `log-capped` warning. A failed write reports once through the
+existing debug log per failing streak and never changes the cache operation.
+Existing notices and `/cache` replies are unchanged.

@@ -16,6 +16,22 @@ const HANDOFF_AGENTS = 'CACHE_LIVE_CONTROL_AGENTS_TTL';
 function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
   const commands: string[] = [];
+  const logs: string[] = [];
+  const process = { fails: false };
+  const failures = { ttl: false, listing: false };
+  const calls: string[] = [];
+  const files = new Map<string, string[]>();
+  on('process.run', async (_$, e) => {
+    if (process.fails) throw new Error('append refused');
+    for (let i = 6; i < e.argv.length; i += 2) {
+      const path = `${e.argv[4]}/${e.argv[i]}`;
+      files.set(path, [...(files.get(path) ?? []), e.argv[i + 1]!]);
+    }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } };
+  });
+  on('ui.log', async (_$, e) => { logs.push(e.text); return { value: undefined } as never; });
+  on('session.id', async () => ({ value: 'log-session' }));
+  on('session.end', async (_$, e) => ({ sessionId: e.sessionId }) as never);
   const toasts: { text: string; timeoutMs?: number }[] = [];
   mock.clock(on, { now: 1_000_000_000_000 });
   on('ui.toast', async (_$, e) => {
@@ -30,16 +46,19 @@ function world(on: On, initial: Record<string, string> = {}) {
   on('turn.complete', async (_$, e) => ({ text: e.answer }));
   on('env.get', async (_$, e) => ({ value: env.get(e.name) }));
   on('env.set', async (_$, e) => {
+    if (failures.ttl && e.name === MAIN) throw new Error('TTL write refused');
     if (e.value === undefined) env.delete(e.name);
     else env.set(e.name, e.value);
     return { value: undefined };
   });
+  on('agent.list', async () => { if (failures.listing) throw new Error('agent list refused'); return { value: [] } as never; });
+  on('tool.call', async (_$, e) => { calls.push((e as unknown as { message: string }).message); return { result: 'sent' } as never; });
   on('command.register', async (_$, e) => {
     commands.push(e.name);
     return { value: { command: e.name } };
   });
   on('session.start', async (_$, e) => ({ cwd: e.cwd }));
-  return { env, commands, toasts };
+  return { env, commands, toasts, logs, process, files, failures, calls };
 }
 
 /** One model request of a party, read to its end: the chunks and result the plugin let through. */
@@ -147,7 +166,6 @@ describe('TTL notice', () => {
       return { text: e.text, context: e.context };
     });
     on('session.compact', async (_$, e) => ({ messages: e.messages }));
-    on('session.end', async (_$, e) => ({ sessionId: e.sessionId }) as never);
     await $.session.start(START);
     const first = await $.prompt.submit(prompt('one'));
     await $.command.run(run('main 5m'));
@@ -307,5 +325,65 @@ describe('warm-cache warning', () => {
     expect((await $.command.run(run('agents 1h'))).text).toBe('main 1h · agents 1h');
     expect((await $.command.run(run('main 1h'))).text).toBe('main 1h · agents 1h');
     expect(w.env.get(AGENTS)).toBe('1h');
+  });
+});
+
+
+describe('plugin log adapter', () => {
+  for (const configured of [true, false]) test(`forced error, warning and heartbeat land (${configured ? 'PLUGIN_LOG_DIR' : 'HOME'})`, async ($, on) => {
+    const home = '/hook-test/home';
+    {
+      const dir = configured ? `${home}/logs/cache-live-control` : `${home}/.local/state/cache-live-control/logs`;
+      const w = world(on, { HOME: home, ...(configured ? { PLUGIN_LOG_DIR: `${home}/logs` } : {}) });
+      w.failures.ttl = true;
+      await $.session.start(START);
+      expect((await $.command.run(run('main 1h'))).text).toBe('failed, the TTL may be unchanged: no implementation for env.set');
+      await $.command.run(run('guard warn'));
+      w.failures.listing = true;
+      await $.tool.call({ tool: 'SendMessage', to: 'unknown', message: 'send this unchanged' } as never);
+      await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+      expect(w.calls).toEqual(['send this unchanged']);
+      const read = async (file: string) => (w.files.get(`${dir}/${file}`) ?? []).map((s) => JSON.parse(s));
+      const errors = await read('errors.jsonl');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ plugin: 'cache-live-control', level: 'error', event: 'ttl-change-failed', where: 'hooks/cache-live-control.ts#runCommand', session: 'log-session', detail: { error: 'no implementation for env.set' } });
+      const warnings = await read('warnings.jsonl');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({ level: 'warning', event: 'resume-check-failed', where: 'hooks/cache-live-control.ts#checkSend', detail: { error: 'no implementation for agent.list' } });
+      expect(await read('info.jsonl')).toEqual([{ ts: '2001-09-09T01:46:40.000Z', plugin: 'cache-live-control', level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } }]);
+    }
+  });
+
+  test('append rejection fallback streak and recovery leave command result unchanged', async ($, on) => {
+    const home = '/hook-test/failure-home';
+    {
+      const w = world(on, { HOME: home, PLUGIN_LOG_DIR: `${home}/logs` });
+      w.process.fails = true;
+      await $.session.start(START);
+      await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+      for (let i = 0; i < 2; i++) {
+        w.failures.ttl = true;
+        expect((await $.command.run(run('main 1h'))).text).toBe('failed, the TTL may be unchanged: no implementation for env.set');
+        await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+      }
+      const fallback = () => w.logs.filter((s) => s.includes('plugin log '));
+      expect(fallback()).toHaveLength(1);
+      expect(fallback()[0]).toContain(`${home}/logs/cache-live-control`);
+      expect(fallback()[0]).toContain('process.run');
+      w.process.fails = false;
+      await $.command.run(run('main 1h'));
+      await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+      w.process.fails = true;
+      await $.command.run(run('main 1h'));
+      await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+      expect(fallback()).toHaveLength(2);
+    }
+  });
+
+  test('missing logging env has one exact off notice', async ($, on) => {
+    const w = world(on);
+    await $.session.start(START);
+    await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
+    expect(w.logs.filter((s) => s.includes('plugin log off:'))).toEqual(['cache-live-control: plugin log off: no PLUGIN_LOG_DIR and no HOME']);
   });
 });

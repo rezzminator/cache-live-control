@@ -11,14 +11,20 @@ import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, o
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
 import { isMarked, summariesStatus, withMark } from '../src/summaries.ts';
 import { type Change, type Party, type Ttl } from '../src/ttl.ts';
+import { levelRow, pluginLogDir, PluginLogQueue, type PluginLogLevel } from '../src/plugin-log.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
 
 // Thin adapter: every decision lives in src/. Claude Code reads the TTL
 // variables on every request, so setting one changes the next request.
 
 const COMMAND = 'cache';
+const PLUGIN_VERSION = '0.6.0';
 
 type State = {
+  logWork: Promise<void>;
+  logFailed: boolean;
+  pluginLog?: { queue: PluginLogQueue; source: 'PLUGIN_LOG_DIR' | 'fallback'; session?: string };
+
   options: ResolvedOptions;
   /** Ignored options, launch-handoff values and a failed start write of the summaries mark, shown by `/cache`. */
   errors: string[];
@@ -67,6 +73,61 @@ type State = {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The existing debug door; logger failure never changes a cache decision. */
+function pluginLogNotice($: EngineInterface, text: string): void {
+  try { $.ui.log(`cache-live-control: ${text}`, { to: 'debug' }); }
+  catch { /* The sole fallback door itself is unavailable; do not fail hook work. */ }
+}
+
+async function runPluginLog($: EngineInterface, argv: readonly string[]) {
+  return $.process.run(argv, { timeoutMs: 5000 });
+}
+
+async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLevel, event: string, msg: string, where: string, detail?: Record<string, unknown>): Promise<void> {
+  if (st.pluginLog === undefined) {
+    const root = await $.env.get('PLUGIN_LOG_DIR');
+    const home = await $.env.get('HOME');
+    let session: string | undefined;
+    try { session = await $.session.id(); }
+    catch (error) { pluginLogNotice($, `plugin log session id unreadable: ${message(error)}`); }
+    st.pluginLog = {
+      queue: new PluginLogQueue(pluginLogDir(root, home, 'cache-live-control'), 'cache-live-control', (text) => pluginLogNotice($, text)),
+      source: root ? 'PLUGIN_LOG_DIR' : 'fallback',
+      ...(session === undefined ? {} : { session }),
+    };
+  }
+  let now: number;
+  try { now = await $.clock.now(); }
+  catch (error) { now = Date.now(); pluginLogNotice($, `plugin log clock unreadable, using wall clock: ${message(error)}`); }
+  const log = st.pluginLog;
+  if (event === 'logger-ready') detail = { ...detail, dir_source: log.source };
+  log.queue.add({ level, row: levelRow({ plugin: 'cache-live-control', level, event, msg, where: `hooks/cache-live-control.ts#${where}`, ...(log.session === undefined ? {} : { session: log.session }), ...(detail === undefined ? {} : { detail }) }, now) });
+  st.logFailed = false;
+  void log.queue.flush((argv) => runPluginLog($, argv));
+}
+
+/** Metadata and writes happen off the hook's path, in order. */
+function plog(st: State, $: EngineInterface, level: PluginLogLevel, event: string, msg: string, where: string, detail?: Record<string, unknown>): void {
+  st.logWork = st.logWork.then(() => queuePluginLog(st, $, level, event, msg, where, detail)).catch((error: unknown) => {
+    if (!st.logFailed) pluginLogNotice($, `plugin log initialization/row failed: ${message(error)}`);
+    st.logFailed = true;
+  });
+}
+
+function fault(st: State, $: EngineInterface, level: PluginLogLevel, event: string, where: string, error: unknown, text: string, debug = false): void {
+  $.ui.log(text, debug ? { to: 'debug' } : undefined);
+  plog(st, $, level, event, text, where, { error: message(error) });
+}
+
+function logReady(st: State, $: EngineInterface): void {
+  plog(st, $, 'info', 'logger-ready', 'plugin logger ready', 'session.start', { version: PLUGIN_VERSION });
+}
+
+async function flushPluginLog(st: State, $: EngineInterface): Promise<void> {
+  await st.logWork;
+  await st.pluginLog?.queue.flush((argv) => runPluginLog($, argv));
 }
 
 async function readEnv($: EngineInterface): Promise<EnvSnapshot> {
@@ -143,23 +204,23 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
       mainChosen = plan.via.main === 'handoff';
       await apply(st, $, plan.change, plan.via);
     } catch (error) {
-      $.ui.log(`cache-live-control: applying the starting TTLs (launch handoff, mainTtl/subagentTtl options) failed: ${message(error)}`);
+      fault(st, $, 'error', 'applying-the-starting-ttls-failed', 'startSession', error, `cache-live-control: applying the starting TTLs (launch handoff, mainTtl/subagentTtl options) failed: ${message(error)}`);
     }
     try {
       await consumeHandoff($);
     } catch (error) {
-      $.ui.log(`cache-live-control: unsetting CACHE_LIVE_CONTROL_MAIN_TTL/CACHE_LIVE_CONTROL_AGENTS_TTL failed: ${message(error)}`);
+      fault(st, $, 'error', 'unsetting-launch-handoff-failed', 'startSession', error, `cache-live-control: unsetting CACHE_LIVE_CONTROL_MAIN_TTL/CACHE_LIVE_CONTROL_AGENTS_TTL failed: ${message(error)}`);
     }
     try {
       await scopeLaunch1h(st, $, mainChosen);
     } catch (error) {
-      $.ui.log(`cache-live-control: keeping ENABLE_PROMPT_CACHING_1H to the main chat failed, sub-agents may run 1h: ${message(error)}`);
+      fault(st, $, 'error', 'keeping-launch-1h-to-the-main-chat-failed', 'startSession', error, `cache-live-control: keeping ENABLE_PROMPT_CACHING_1H to the main chat failed, sub-agents may run 1h: ${message(error)}`);
     }
     if (st.options.summaries === 'block') {
       try {
         await writeSummaries($, true);
       } catch (error) {
-        $.ui.log(`cache-live-control: marking requests to stop the sub-agent summaries failed, they may still run: ${message(error)}`);
+        fault(st, $, 'error', 'marking-requests-to-stop-sub-agent-summaries-failed', 'startSession', error, `cache-live-control: marking requests to stop the sub-agent summaries failed, they may still run: ${message(error)}`);
         st.errors.push(`option summaries block: marking the requests failed, they are not marked: ${message(error)}`);
       }
     }
@@ -172,7 +233,7 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
       immediate: true,
     });
   } catch (error) {
-    $.ui.log(`cache-live-control: registering /${COMMAND} failed: ${message(error)}`);
+    fault(st, $, 'error', 'registering-cache-failed', 'startSession', error, `cache-live-control: registering /${COMMAND} failed: ${message(error)}`);
   }
 }
 
@@ -194,7 +255,7 @@ async function weighWake(st: State, $: EngineInterface): Promise<boolean> {
     weighed = onWake(st.raise, { record: st.records.main, now, env, ours: st.ours });
   } catch (error) {
     st.raise = markFailed(st.raise, message(error), 'read');
-    $.ui.log(`cache-live-control: weighing the wake for the auto-raise failed: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'warning', 'weighing-the-wake-for-the-auto-raise-failed', 'weighWake', error, `cache-live-control: weighing the wake for the auto-raise failed: ${message(error)}`, true);
     return false;
   }
   st.raise = weighed.state;
@@ -205,7 +266,7 @@ async function weighWake(st: State, $: EngineInterface): Promise<boolean> {
   } catch (error) {
     // A `/cache main` typed meanwhile has answered since: its word stands.
     if (st.mainTyped === typed) st.raise = markFailed(st.raise, message(error));
-    $.ui.log(`cache-live-control: the auto-raise failed, the TTL may be unchanged: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'error', 'auto-raise-failed', 'weighWake', error, `cache-live-control: the auto-raise failed, the TTL may be unchanged: ${message(error)}`, true);
     return true;
   }
   // Only a typed `/cache main` outranks the raise; a restart or a failure landing meanwhile leaves the 1h it wrote its own.
@@ -223,7 +284,7 @@ async function restartRaise(st: State, $: EngineInterface, restart: typeof onBou
     st.raise = restart(st.raise, now);
   } catch (error) {
     st.raise = markFailed(st.raise, `restarting the count failed: ${message(error)}`, kind);
-    $.ui.log(`cache-live-control: restarting the auto-raise count failed: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'error', 'restarting-the-auto-raise-count-failed', 'restartRaise', error, `cache-live-control: restarting the auto-raise count failed: ${message(error)}`, true);
   }
 }
 
@@ -248,7 +309,7 @@ async function agentRequest(st: State, $: EngineInterface, id: string): Promise<
     st.agents = prune(noteRequest(st.agents, id, { at, ttl }), at, st.guard.mode !== 'off', AGENT_CAP);
     st.records.agents = { at, ttl };
   } catch (error) {
-    $.ui.log(`cache-live-control: noting a request of agent ${id} for the resume guard failed: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'warning', 'noting-a-request-for-the-resume-guard-failed', 'agentRequest', error, `cache-live-control: noting a request of agent ${id} for the resume guard failed: ${message(error)}`, true);
   }
 }
 
@@ -267,7 +328,7 @@ async function spawned(st: State, $: EngineInterface, agentId: string, info: { n
     if (st.conversation !== conversation) return;
     st.agents = noteSpawn(st.agents, agentId, { ...info, at });
   } catch (error) {
-    $.ui.log(`cache-live-control: noting the spawn of agent ${agentId} failed: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'warning', 'noting-the-spawn-failed', 'spawned', error, `cache-live-control: noting the spawn of agent ${agentId} failed: ${message(error)}`, true);
   }
 }
 
@@ -305,16 +366,19 @@ async function checkSend(st: State, $: EngineInterface, to: string, text: string
     const size = `(~${tokenText(record.context)} tokens)`;
     if (override !== undefined) {
       note(st, now, `resumed ${label} anyway`);
+      plog(st, $, 'warning', 'resumed-anyway', `resumed ${label} anyway`, 'checkSend', { agent: id });
       return { body };
     }
     if (verdict.kind === 'block') {
       note(st, now, `blocked a resume of ${label} ${size}`);
+      plog(st, $, 'info', 'resume-blocked', `blocked a resume of ${label} ${size}`, 'checkSend', { agent: id });
       return { deny: verdict.text };
     }
     note(st, now, `warned about a resume of ${label} ${size}`);
+    plog(st, $, 'info', 'resume-warned', `warned about a resume of ${label} ${size}`, 'checkSend', { agent: id });
     return { body, warn: verdict.text };
   } catch (error) {
-    $.ui.log(`cache-live-control: checking the resume of ${to} failed, the message is sent: ${message(error)}`);
+    fault(st, $, 'warning', 'resume-check-failed', 'checkSend', error, `cache-live-control: checking the resume of ${to} failed, the message is sent: ${message(error)}`);
     note(st, st.lastAt ?? Date.now(), `could not check a resume of ${to}: ${message(error)}`);
     return { body };
   }
@@ -352,6 +416,7 @@ async function applySettings(st: State, $: EngineInterface, settings: Settings, 
       written = true;
       out.push(summariesStatus(isMarked(await $.env.get('ANTHROPIC_CUSTOM_HEADERS'))));
     } catch (error) {
+      plog(st, $, written ? 'warning' : 'error', written ? 'summaries-readback-failed' : 'summaries-failed', written ? `reading the summaries header back failed: ${message(error)}` : `summaries failed, the header may be unchanged: ${message(error)}`, 'applySettings', { error: message(error) });
       out.push(
         written
           ? `summaries ${settings.summaries}, reading the header back failed: ${message(error)}`
@@ -370,11 +435,11 @@ async function recordStep(st: State, $: EngineInterface, party: Party): Promise<
 }
 
 /** A warning shown at once; a failure is logged and never changes the reply. */
-function toast($: EngineInterface, text: string, what: string): void {
+function toast(st: State, $: EngineInterface, text: string, what: string): void {
   try {
     $.ui.toast(text, { timeoutMs: 10_000 });
   } catch (error) {
-    $.ui.log(`cache-live-control: showing the ${what} toast failed: ${message(error)}`, { to: 'debug' });
+    fault(st, $, 'warning', 'showing-toast-failed', 'toast', error, `cache-live-control: showing the ${what} toast failed: ${message(error)}`, true);
   }
 }
 
@@ -402,10 +467,11 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
           if (action.change.main !== undefined) st.mainTyped += 1;
         }
         const state = formatState(await readEnv($), st.ours);
-        if (warm.length > 0 && st.mainTurnRunning) toast($, `${warmNote(warm)} — now ${state}`, 'warm-cache');
+        if (warm.length > 0 && st.mainTurnRunning) toast(st, $, `${warmNote(warm)} — now ${state}`, 'warm-cache');
         text = warm.length > 0 ? `switched; ${warmNote(warm)}: ${state}` : state;
       } catch (error) {
         text = `failed, the TTL may be unchanged: ${message(error)}`;
+        plog(st, $, 'error', 'ttl-change-failed', text, 'runCommand', { error: message(error) });
       }
     }
     // The settings apply whatever became of the TTL words, and say so on their own.
@@ -415,10 +481,12 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         set = await applySettings(st, $, action.settings, now);
       } catch (error) {
         set = [`settings applied, reading their state failed: ${message(error)}`];
+        plog(st, $, 'warning', 'reading-settings-state-failed', set[0]!, 'runCommand', { error: message(error) });
       }
     }
     return { text: [...(text === undefined ? [] : [text]), ...set].join(' · ') };
   } catch (error) {
+    plog(st, $, 'error', 'command-failed', `failed, the TTL may be unchanged: ${message(error)}`, 'runCommand', { error: message(error) });
     return { text: `failed, the TTL may be unchanged: ${message(error)}` };
   }
 }
@@ -426,6 +494,8 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
 export const register: Register = (on: On, options: PluginOptions) => {
   const resolved = resolveOptions(options as Record<string, unknown>);
   const st: State = {
+    logWork: Promise.resolve(),
+    logFailed: false,
     options: resolved,
     raise: newRaise(resolved.raiseAfter),
     errors: [],
@@ -448,6 +518,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('session.start', async ($, e, next) => {
     const result = await next(e);
     await startSession(st, $);
+    logReady(st, $);
     return result;
   });
 
@@ -466,7 +537,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         if (submitted === undefined || submitted.at !== st.records.main?.at) await weighWake(st, $);
       }
     } catch (error) {
-      $.ui.log(`cache-live-control: noting a turn start failed: ${message(error)}`, { to: 'debug' });
+      fault(st, $, 'warning', 'noting-a-turn-start-failed', 'turn.start', error, `cache-live-control: noting a turn start failed: ${message(error)}`, true);
     }
     return next(e);
   });
@@ -481,7 +552,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       recordStep(st, $, 'main').catch((error: unknown) => {
-        $.ui.log(`cache-live-control: noting a main request for the warm-cache warning failed: ${message(error)}`, { to: 'debug' });
+        fault(st, $, 'warning', 'noting-a-main-request-for-the-warm-cache-warning-failed', 'turn.step', error, `cache-live-control: noting a main request for the warm-cache warning failed: ${message(error)}`, true);
       });
       return yield* next(e);
     }
@@ -513,7 +584,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     if ('deny' in checked) return { deny: checked.deny };
     const result = await next(checked.body === call.message ? e : ({ ...e, message: checked.body } as typeof e));
     if (checked.warn === undefined || result.deny !== undefined) return result;
-    toast($, checked.warn, 'resume-guard');
+    toast(st, $, checked.warn, 'resume-guard');
     return { ...result, context: [...(result.context ?? []), checked.warn] };
   });
 
@@ -538,7 +609,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       try {
         n = noticeTtl(await readEnv($), st.ours);
       } catch (error) {
-        $.ui.log(`cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, { to: 'debug' });
+        fault(st, $, 'warning', 'building-the-ttl-notice-failed', 'prompt.submit', error, `cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, true);
       }
     }
     if (n === st.noticed) n = null;
@@ -571,6 +642,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     delete st.noticed;
     await restartRaise(st, $, onSessionEnd, 'end');
     endAgents(st);
-    return next(e);
+    const result = await next(e);
+    await flushPluginLog(st, $);
+    return result;
   });
 };

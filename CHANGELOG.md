@@ -2,7 +2,10 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
-## [Unreleased]
+## [0.6.0] — 2026-10-14
+
+### Added
+- Append-only plugin logs split into errors, warnings and info under `PLUGIN_LOG_DIR/cache-live-control`, falling back to `$HOME/.local/state/cache-live-control/logs`. Rows carry event, component and session, with bounded private files, size-cap warnings and one session-start readiness row. Failed writes report once per failing streak without changing cache decisions or existing output.
 
 ## [0.5.0] — 2026-10-13
 
