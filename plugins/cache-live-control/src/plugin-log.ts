@@ -74,6 +74,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 dir=$1
+case "$dir" in -*) dir=./$dir;; esac
 plugin=$2
 shift 2
 if [ -L "$dir" ]; then echo "plugin log $dir: directory is a symlink" >&2; exit 1; fi
@@ -83,11 +84,11 @@ done
 case "$plugin" in ''|*[!a-z0-9-]*) echo "plugin log $dir: invalid plugin name" >&2; exit 2;; esac
 mkdir -p -- "$dir"
 if [ ! -w "$dir" ]; then echo "plugin log $dir: directory not writable" >&2; exit 1; fi
-chmod 700 -- "$dir"
+chmod 700 "$dir"
 private_file() {
   if [ -e "$1" ]; then
     if [ ! -f "$1" ] || [ ! -w "$1" ]; then echo "plugin log $1: level file not writable" >&2; return 1; fi
-    chmod 600 -- "$1"
+    chmod 600 "$1"
   fi
 }
 private_backup() {

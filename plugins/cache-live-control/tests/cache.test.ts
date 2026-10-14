@@ -350,7 +350,7 @@ describe('plugin log adapter', () => {
       const warnings = await read('warnings.jsonl');
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toMatchObject({ level: 'warning', event: 'resume-check-failed', where: 'hooks/cache-live-control.ts#checkSend', detail: { error: 'no implementation for agent.list' } });
-      expect(await read('info.jsonl')).toEqual([{ ts: '2001-09-09T01:46:40.000Z', plugin: 'cache-live-control', level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } }]);
+      expect(await read('info.jsonl')).toEqual([{ ts: '2001-09-09T01:46:40.000Z', plugin: 'cache-live-control', level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.1', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } }]);
     }
   });
 

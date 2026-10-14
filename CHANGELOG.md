@@ -2,6 +2,11 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [0.6.1] — 2026-10-15
+
+### Fixed
+- Plugin log writes work with macOS chmod, including private existing levels and backups, cap rotations and hyphen-leading relative log roots.
+
 ## [0.6.0] — 2026-10-14
 
 ### Added

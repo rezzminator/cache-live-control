@@ -18,7 +18,7 @@ import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.
 // variables on every request, so setting one changes the next request.
 
 const COMMAND = 'cache';
-const PLUGIN_VERSION = '0.6.0';
+const PLUGIN_VERSION = '0.6.1';
 
 type State = {
   logWork: Promise<void>;

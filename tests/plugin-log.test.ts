@@ -24,8 +24,8 @@ async function temp() { const d = await mkdtemp(join(tmpdir(), 'cache-plugin-log
 const fields = { plugin: 'cache-live-control', level: 'error' as const, event: 'ttl-change-failed', msg: 'write refused', where: 'hooks/cache-live-control.ts#runCommand' };
 const now = 1791991231123;
 const row = (level: 'error' | 'warning' | 'info') => ({ level, row: levelRow({ ...fields, level }, now) });
-async function run(argv: readonly string[]) {
-  try { const { stdout, stderr } = await exec(argv[0]!, argv.slice(1), { timeout: 5000 }); return { exitCode: 0, stdout, stderr }; }
+async function run(argv: readonly string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
+  try { const { stdout, stderr } = await exec(argv[0]!, argv.slice(1), { timeout: 5000, ...options }); return { exitCode: 0, stdout, stderr }; }
   catch (error) { const e = error as Error & { code?: number; stdout?: string; stderr?: string }; return { exitCode: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? e.message }; }
 }
 
@@ -76,6 +76,59 @@ test('APPEND_SCRIPT writes all levels with private modes and literal argv', asyn
     expect((await stat(legacy)).mode & 0o777).toBe(0o644);
     expect(await contents(legacy)).toBe('legacy');
   }
+});
+
+test.each([
+  { relative: false, existing: false }, { relative: true, existing: false },
+  { relative: false, existing: true }, { relative: true, existing: true },
+])('APPEND_SCRIPT appends private rows with BSD chmod: %j', async ({ relative, existing }) => {
+  const parent = await temp();
+  const bin = join(parent, 'bin'); await mkdir(bin);
+  const trace = join(parent, 'chmod.calls');
+  await writeFile(join(bin, 'chmod'), `#!/bin/sh
+for arg do
+  case "$arg" in
+    --) printf 'chmod: --: No such file or directory\\n' >&2; exit 1;;
+    -*) printf 'chmod: illegal option -- %s\\n' "$arg" >&2; exit 1;;
+  esac
+done
+printf '%s\\n' "$*" >> "$BSD_CHMOD_TRACE"
+exec /bin/chmod "$@"
+`, { mode: 0o755 });
+  const configured = relative ? "-logs ' $(echo no)" : join(parent, "logs ' $(echo no)");
+  const dir = pluginLogDir(configured, undefined, fields.plugin)!;
+  const disk = relative ? join(parent, dir) : dir;
+  const capped = 'x'.repeat(PLUGIN_LOG_CAP_BYTES + 1);
+  if (existing) {
+    await mkdir(disk, { recursive: true, mode: 0o755 });
+    for (const file of ['errors', 'warnings', 'info']) {
+      await writeFile(join(disk, `${file}.jsonl`), file === 'info' ? '' : capped, { mode: 0o644 });
+      await writeFile(join(disk, `${file}.jsonl.1`), `prior-${file}\n`, { mode: 0o644 });
+    }
+  }
+  const rows = [row('error'), row('warning'), row('info')];
+  const result = await run(appendArgv(dir, fields.plugin, rows)[0]!, {
+    cwd: parent, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`, BSD_CHMOD_TRACE: trace },
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toBe('');
+  expect(await readFile(join(disk, 'errors.jsonl'), 'utf8')).toBe(rows[0]!.row);
+  expect(await readFile(join(disk, 'info.jsonl'), 'utf8')).toBe(rows[2]!.row);
+  const warnings = await readFile(join(disk, 'warnings.jsonl'), 'utf8');
+  if (existing) {
+    const parsed = warnings.trim().split('\n').map((line) => JSON.parse(line));
+    expect(parsed.map((r) => r.event)).toEqual(['log-capped', 'log-capped', fields.event]);
+    expect(warnings.endsWith(rows[1]!.row)).toBe(true);
+    for (const file of ['errors', 'warnings', 'info']) {
+      expect(await readFile(join(disk, `${file}.jsonl.1`), 'utf8')).toBe(file === 'info' ? 'prior-info\n' : capped);
+      expect((await stat(join(disk, `${file}.jsonl.1`))).mode & 0o777).toBe(0o600);
+    }
+  } else expect(warnings).toBe(rows[1]!.row);
+  for (const file of ['errors', 'warnings', 'info']) expect((await stat(join(disk, `${file}.jsonl`))).mode & 0o777).toBe(0o600);
+  expect((await stat(disk)).mode & 0o777).toBe(0o700);
+  const calls = (await readFile(trace, 'utf8')).trim().split('\n');
+  expect(calls[0]).toBe(`700 ${relative ? './' : ''}${dir}`);
+  if (existing) expect(calls).toContain(`600 ${relative ? './' : ''}${dir}/info.jsonl.1`);
 });
 
 test('APPEND_SCRIPT refuses nonregular backup leaves without touching foreign objects', async () => {
@@ -311,7 +364,7 @@ test('real adapter writes forced error, resume warning and heartbeat under confi
     const warnings = await read('warnings.jsonl'); expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ plugin: fields.plugin, level: 'warning', event: 'resume-check-failed', where: 'hooks/cache-live-control.ts#checkSend', detail: { error: 'agent list refused' } });
     const info = await read('info.jsonl'); expect(info).toHaveLength(1);
-    expect(info[0]).toEqual({ ts: '2001-09-09T01:46:40.000Z', plugin: fields.plugin, level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } });
+    expect(info[0]).toEqual({ ts: '2001-09-09T01:46:40.000Z', plugin: fields.plugin, level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.1', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } });
     for (const row of [...errors, ...warnings, ...info]) expect(Buffer.byteLength(JSON.stringify(row) + '\n')).toBeLessThanOrEqual(4096);
   }
 });
