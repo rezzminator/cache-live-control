@@ -29,6 +29,16 @@ async function run(argv: readonly string[]) {
   catch (error) { const e = error as Error & { code?: number; stdout?: string; stderr?: string }; return { exitCode: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? e.message }; }
 }
 
+// macOS /bin/chmod reads `--` as a file name ("chmod: --: No such file or directory") and
+// GNU chmod accepts it, so a Linux-only suite let the script fail on every Mac. This shim is
+// the BSD behaviour on any OS: an operand `--` fails, anything else reaches the real chmod.
+async function bsdChmodPath() {
+  const bin = await temp();
+  const shim = join(bin, 'chmod');
+  await writeFile(shim, '#!/bin/sh\nfor a in "$@"; do [ "$a" = -- ] && { echo "chmod: --: No such file or directory" >&2; exit 1; }; done\nexec /bin/chmod "$@"\n', { mode: 0o755 });
+  return `${bin}:${process.env.PATH}`;
+}
+
 test('levelRow ordered contract and bounded UTF-8 rows', () => {
   for (const extra of [{}, { session: 's1', detail: { error: 'write refused' } }, { msg: '😀\\\n'.repeat(5000), detail: { error: 'x'.repeat(9000) } }, { event: 'e'.repeat(9000), where: 'w'.repeat(9000), session: 's'.repeat(9000) }]) {
     const input = { ...fields, ...extra };
@@ -78,6 +88,26 @@ test('APPEND_SCRIPT writes all levels with private modes and literal argv', asyn
   }
 });
 
+
+test('APPEND_SCRIPT writes under a BSD-style chmod that rejects the -- operand', async () => {
+  const PATH = await bsdChmodPath();
+  const d = join(await temp(), 'logs');
+  const rows = ['error', 'warning', 'info'].map((l) => row(l as 'error' | 'warning' | 'info'));
+  const env = { ...process.env, PATH };
+  for (const pass of [0, 1]) for (const argv of appendArgv(d, fields.plugin, rows)) { const { stderr } = await exec(argv[0]!, argv.slice(1), { timeout: 5000, env }); expect(stderr, `pass ${pass}`).toBe(''); }
+  for (const [level, file] of [['error', 'errors'], ['warning', 'warnings'], ['info', 'info']] as const) {
+    expect(await contents(join(d, `${file}.jsonl`))).toBe(row(level).row.repeat(2));
+    expect((await stat(join(d, `${file}.jsonl`))).mode & 0o777).toBe(0o600);
+  }
+  expect((await stat(d)).mode & 0o777).toBe(0o700);
+});
+
+test('APPEND_SCRIPT takes a relative log directory that starts with a dash as a path, not a chmod option', async () => {
+  const PATH = await bsdChmodPath();
+  const cwd = await temp();
+  for (const argv of appendArgv('-logs', fields.plugin, [row('error')])) await exec(argv[0]!, argv.slice(1), { timeout: 5000, cwd, env: { ...process.env, PATH } });
+  expect(await contents(join(cwd, '-logs', 'errors.jsonl'))).toBe(row('error').row);
+});
 test('APPEND_SCRIPT refuses nonregular backup leaves without touching foreign objects', async () => {
   for (const kind of ['dangling-symlink', 'directory']) {
     const parent = await temp(); const d = join(parent, 'logs'); await mkdir(d, { mode: 0o700 });

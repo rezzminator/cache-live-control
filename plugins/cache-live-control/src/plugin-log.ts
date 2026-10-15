@@ -76,6 +76,9 @@ umask 077
 dir=$1
 plugin=$2
 shift 2
+# BSD chmod (macOS) reads a "--" operand as a file name, so no chmod below takes it: a
+# directory that starts with a dash is made a ./ path instead.
+case "$dir" in -*) dir=./$dir ;; esac
 if [ -L "$dir" ]; then echo "plugin log $dir: directory is a symlink" >&2; exit 1; fi
 for leaf in errors.jsonl errors.jsonl.1 warnings.jsonl warnings.jsonl.1 info.jsonl info.jsonl.1; do
   if [ -L "$dir/$leaf" ]; then echo "plugin log $dir/$leaf: level endpoint is a symlink" >&2; exit 1; fi
@@ -83,11 +86,11 @@ done
 case "$plugin" in ''|*[!a-z0-9-]*) echo "plugin log $dir: invalid plugin name" >&2; exit 2;; esac
 mkdir -p -- "$dir"
 if [ ! -w "$dir" ]; then echo "plugin log $dir: directory not writable" >&2; exit 1; fi
-chmod 700 -- "$dir"
+chmod 700 "$dir"
 private_file() {
   if [ -e "$1" ]; then
     if [ ! -f "$1" ] || [ ! -w "$1" ]; then echo "plugin log $1: level file not writable" >&2; return 1; fi
-    chmod 600 -- "$1"
+    chmod 600 "$1"
   fi
 }
 private_backup() {
