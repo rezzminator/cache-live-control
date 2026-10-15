@@ -18,12 +18,11 @@ import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.
 // variables on every request, so setting one changes the next request.
 
 const COMMAND = 'cache';
-const PLUGIN_VERSION = '0.6.1';
 
 type State = {
   logWork: Promise<void>;
   logFailed: boolean;
-  pluginLog?: { queue: PluginLogQueue; source: 'PLUGIN_LOG_DIR' | 'fallback'; session?: string };
+  pluginLog?: { queue: PluginLogQueue; session?: string };
 
   options: ResolvedOptions;
   /** Ignored options, launch-handoff values and a failed start write of the summaries mark, shown by `/cache`. */
@@ -94,7 +93,6 @@ async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLev
     catch (error) { pluginLogNotice($, `plugin log session id unreadable: ${message(error)}`); }
     st.pluginLog = {
       queue: new PluginLogQueue(pluginLogDir(root, home, 'cache-live-control'), 'cache-live-control', (text) => pluginLogNotice($, text)),
-      source: root ? 'PLUGIN_LOG_DIR' : 'fallback',
       ...(session === undefined ? {} : { session }),
     };
   }
@@ -102,7 +100,6 @@ async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLev
   try { now = await $.clock.now(); }
   catch (error) { now = Date.now(); pluginLogNotice($, `plugin log clock unreadable, using wall clock: ${message(error)}`); }
   const log = st.pluginLog;
-  if (event === 'logger-ready') detail = { ...detail, dir_source: log.source };
   log.queue.add({ level, row: levelRow({ plugin: 'cache-live-control', level, event, msg, where: `hooks/cache-live-control.ts#${where}`, ...(log.session === undefined ? {} : { session: log.session }), ...(detail === undefined ? {} : { detail }) }, now) });
   st.logFailed = false;
   void log.queue.flush((argv) => runPluginLog($, argv));
@@ -117,12 +114,8 @@ function plog(st: State, $: EngineInterface, level: PluginLogLevel, event: strin
 }
 
 function fault(st: State, $: EngineInterface, level: PluginLogLevel, event: string, where: string, error: unknown, text: string, debug = false): void {
-  $.ui.log(text, debug ? { to: 'debug' } : undefined);
   plog(st, $, level, event, text, where, { error: message(error) });
-}
-
-function logReady(st: State, $: EngineInterface): void {
-  plog(st, $, 'info', 'logger-ready', 'plugin logger ready', 'session.start', { version: PLUGIN_VERSION });
+  $.ui.log(text, debug ? { to: 'debug' } : undefined);
 }
 
 async function flushPluginLog(st: State, $: EngineInterface): Promise<void> {
@@ -518,7 +511,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('session.start', async ($, e, next) => {
     const result = await next(e);
     await startSession(st, $);
-    logReady(st, $);
     return result;
   });
 

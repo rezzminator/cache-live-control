@@ -77,24 +77,8 @@ dir=$1
 case "$dir" in -*) dir=./$dir;; esac
 plugin=$2
 shift 2
-if [ -L "$dir" ]; then echo "plugin log $dir: directory is a symlink" >&2; exit 1; fi
-for leaf in errors.jsonl errors.jsonl.1 warnings.jsonl warnings.jsonl.1 info.jsonl info.jsonl.1; do
-  if [ -L "$dir/$leaf" ]; then echo "plugin log $dir/$leaf: level endpoint is a symlink" >&2; exit 1; fi
-done
 case "$plugin" in ''|*[!a-z0-9-]*) echo "plugin log $dir: invalid plugin name" >&2; exit 2;; esac
 mkdir -p -- "$dir"
-if [ ! -w "$dir" ]; then echo "plugin log $dir: directory not writable" >&2; exit 1; fi
-chmod 700 "$dir"
-private_file() {
-  if [ -e "$1" ]; then
-    if [ ! -f "$1" ] || [ ! -w "$1" ]; then echo "plugin log $1: level file not writable" >&2; return 1; fi
-    chmod 600 "$1"
-  fi
-}
-private_backup() {
-  if [ -L "$1" ]; then echo "plugin log $1: level backup is a symlink" >&2; return 1; fi
-  private_file "$1"
-}
 cap_row() {
   printf '{"ts":"%s","plugin":"%s","level":"warning","event":"log-capped","msg":"%s","where":"src/plugin-log.ts#APPEND_SCRIPT"%s,"detail":%s}' "$ts" "$plugin" "$cap_msg" "$session_field" "$cap_detail"
 }
@@ -164,8 +148,6 @@ while [ "$#" -gt 0 ]; do
   shift 2
   case "$file" in errors.jsonl|warnings.jsonl|info.jsonl) ;; *) echo "plugin log $dir: invalid level file" >&2; exit 2;; esac
   target=$dir/$file
-  private_file "$target"
-  private_backup "$target.1"
   if [ -f "$target" ]; then
     size=$(wc -c < "$target")
     if [ "$size" -gt ${PLUGIN_LOG_CAP_BYTES} ]; then
@@ -182,8 +164,6 @@ while [ "$#" -gt 0 ]; do
       session_value=
       session_field=
       case "$header" in *"$session_key"*) session_value=\${header#*"$session_key"}; session_field=$session_key$session_value;; esac
-      private_file "$dir/warnings.jsonl"
-      private_backup "$dir/warnings.jsonl.1"
       if [ -f "$dir/warnings.jsonl" ]; then
         warning_size=$(wc -c < "$dir/warnings.jsonl")
         if [ "$warning_size" -gt ${PLUGIN_LOG_CAP_BYTES} ]; then

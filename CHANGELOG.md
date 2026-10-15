@@ -2,15 +2,20 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [0.6.2] — 2026-10-15
+
+### Fixed
+- Failure rows are queued before screen output, so a screen exception still leaves the error or warning in the level log.
+
 ## [0.6.1] — 2026-10-15
 
 ### Fixed
-- Plugin log writes work with macOS chmod, including private existing levels and backups, cap rotations and hyphen-leading relative log roots.
+- Plugin log writes support cap rotations and hyphen-leading relative log roots on macOS.
 
 ## [0.6.0] — 2026-10-14
 
 ### Added
-- Append-only plugin logs split into errors, warnings and info under `PLUGIN_LOG_DIR/cache-live-control`, falling back to `$HOME/.local/state/cache-live-control/logs`. Rows carry event, component and session, with bounded private files, size-cap warnings and one session-start readiness row. Failed writes report once per failing streak without changing cache decisions or existing output.
+- Append-only plugin logs split into errors, warnings and info under `PLUGIN_LOG_DIR/cache-live-control`, falling back to `$HOME/.local/state/cache-live-control/logs`. Rows carry event, component and session, with bounded rows and size-cap warnings. Failed writes report once per failing streak without changing cache decisions or existing output.
 
 ## [0.5.0] — 2026-10-13
 

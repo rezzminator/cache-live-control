@@ -330,7 +330,7 @@ describe('warm-cache warning', () => {
 
 
 describe('plugin log adapter', () => {
-  for (const configured of [true, false]) test(`forced error, warning and heartbeat land (${configured ? 'PLUGIN_LOG_DIR' : 'HOME'})`, async ($, on) => {
+  for (const configured of [true, false]) test(`forced error and warning land (${configured ? 'PLUGIN_LOG_DIR' : 'HOME'})`, async ($, on) => {
     const home = '/hook-test/home';
     {
       const dir = configured ? `${home}/logs/cache-live-control` : `${home}/.local/state/cache-live-control/logs`;
@@ -350,7 +350,6 @@ describe('plugin log adapter', () => {
       const warnings = await read('warnings.jsonl');
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toMatchObject({ level: 'warning', event: 'resume-check-failed', where: 'hooks/cache-live-control.ts#checkSend', detail: { error: 'no implementation for agent.list' } });
-      expect(await read('info.jsonl')).toEqual([{ ts: '2001-09-09T01:46:40.000Z', plugin: 'cache-live-control', level: 'info', event: 'logger-ready', msg: 'plugin logger ready', where: 'hooks/cache-live-control.ts#session.start', session: 'log-session', detail: { version: '0.6.1', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } }]);
     }
   });
 
@@ -383,6 +382,8 @@ describe('plugin log adapter', () => {
   test('missing logging env has one exact off notice', async ($, on) => {
     const w = world(on);
     await $.session.start(START);
+    w.failures.ttl = true;
+    await $.command.run(run('main 1h'));
     await $.session.end({ reason: 'clear', sessionId: 's', resume: {} } as never);
     expect(w.logs.filter((s) => s.includes('plugin log off:'))).toEqual(['cache-live-control: plugin log off: no PLUGIN_LOG_DIR and no HOME']);
   });
