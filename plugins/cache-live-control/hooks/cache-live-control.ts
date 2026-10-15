@@ -5,7 +5,7 @@ import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, ta
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
 import { launchChange } from '../src/launch.ts';
 import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
-import { resolveOptions, type ResolvedOptions } from '../src/options.ts';
+import { resolveOptions, type EnvValues, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs, type Settings } from '../src/parse.ts';
 import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, setAfter as setRaiseAfter, type FailureKind, type RaiseState } from '../src/raise.ts';
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
@@ -24,7 +24,12 @@ type State = {
   logFailed: boolean;
   pluginLog?: { queue: PluginLogQueue; session?: string };
 
+  /** The plugin's configuration as Claude Code handed it over: the layer below the option variables. */
+  settings: PluginOptions;
+  /** The options, with the option variables over `settings`; settings alone until `ready` settles. */
   options: ResolvedOptions;
+  /** Reading the option variables, once, before any hook decides on an option. */
+  ready?: Promise<void>;
   /** Ignored options, launch-handoff values and a failed start write of the summaries mark, shown by `/cache`. */
   errors: string[];
   ours: Ours;
@@ -139,9 +144,49 @@ async function writeParty($: EngineInterface, party: Party, value: Ttl | null): 
 
 async function readHandoff($: EngineInterface): Promise<HandoffSnapshot> {
   return {
-    main: await $.env.get('CACHE_LIVE_CONTROL_MAIN_TTL'),
-    agents: await $.env.get('CACHE_LIVE_CONTROL_AGENTS_TTL'),
+    CACHE_LIVE_CONTROL_MAIN_TTL: await $.env.get('CACHE_LIVE_CONTROL_MAIN_TTL'),
+    CACHE_LIVE_CONTROL_SUBAGENT_TTL: await $.env.get('CACHE_LIVE_CONTROL_SUBAGENT_TTL'),
+    CACHE_LIVE_CONTROL_AGENTS_TTL: await $.env.get('CACHE_LIVE_CONTROL_AGENTS_TTL'),
   };
+}
+
+/** The option variables other than the two starting TTLs, which readHandoff reads. */
+async function readOptionEnv($: EngineInterface): Promise<EnvValues> {
+  return {
+    CACHE_LIVE_CONTROL_TTL_NOTICE: await $.env.get('CACHE_LIVE_CONTROL_TTL_NOTICE'),
+    CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES: await $.env.get('CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES'),
+    CACHE_LIVE_CONTROL_RESUME_GUARD: await $.env.get('CACHE_LIVE_CONTROL_RESUME_GUARD'),
+    CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS: await $.env.get('CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS'),
+    CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE: await $.env.get('CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE'),
+    CACHE_LIVE_CONTROL_SUMMARIES: await $.env.get('CACHE_LIVE_CONTROL_SUMMARIES'),
+  };
+}
+
+function guardConfig(options: ResolvedOptions): GuardConfig {
+  return {
+    mode: options.guard ?? 'off',
+    floor: options.guardFloor ?? DEFAULT_FLOOR,
+    ...(options.guardPrice === undefined ? {} : { price: options.guardPrice }),
+  };
+}
+
+/** Resolves the options with their variables over the settings; a failed read leaves the settings alone, named. */
+async function loadOptions(st: State, $: EngineInterface): Promise<void> {
+  try {
+    st.options = resolveOptions(st.settings as Record<string, unknown>, await readOptionEnv($));
+    st.raise = newRaise(st.options.raiseAfter);
+    st.guard = guardConfig(st.options);
+  } catch (error) {
+    const text = `cache-live-control: reading the option variables (CACHE_LIVE_CONTROL_*) failed, the options stand as configured: ${message(error)}`;
+    st.errors.push(text);
+    fault(st, $, 'error', 'reading-the-option-variables-failed', 'loadOptions', error, text);
+  }
+}
+
+/** Every hook that decides on an option waits here first: the variables are read once. */
+function ready(st: State, $: EngineInterface): Promise<void> {
+  st.ready ??= loadOptions(st, $);
+  return st.ready;
 }
 
 /** The mark in ANTHROPIC_CUSTOM_HEADERS, which Claude Code re-reads for each request: the user's own lines stay. */
@@ -152,6 +197,7 @@ async function writeSummaries($: EngineInterface, blocked: boolean): Promise<voi
 /** Consumed: a program the chat starts never inherits them, a reload never re-applies them. */
 async function consumeHandoff($: EngineInterface): Promise<void> {
   await $.env.set('CACHE_LIVE_CONTROL_MAIN_TTL', undefined);
+  await $.env.set('CACHE_LIVE_CONTROL_SUBAGENT_TTL', undefined);
   await $.env.set('CACHE_LIVE_CONTROL_AGENTS_TTL', undefined);
 }
 
@@ -197,12 +243,12 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
       mainChosen = plan.via.main === 'handoff';
       await apply(st, $, plan.change, plan.via);
     } catch (error) {
-      fault(st, $, 'error', 'applying-the-starting-ttls-failed', 'startSession', error, `cache-live-control: applying the starting TTLs (launch handoff, mainTtl/subagentTtl options) failed: ${message(error)}`);
+      fault(st, $, 'error', 'applying-the-starting-ttls-failed', 'startSession', error, `cache-live-control: applying the starting TTLs (CACHE_LIVE_CONTROL_MAIN_TTL/CACHE_LIVE_CONTROL_SUBAGENT_TTL, mainTtl/subagentTtl options) failed: ${message(error)}`);
     }
     try {
       await consumeHandoff($);
     } catch (error) {
-      fault(st, $, 'error', 'unsetting-launch-handoff-failed', 'startSession', error, `cache-live-control: unsetting CACHE_LIVE_CONTROL_MAIN_TTL/CACHE_LIVE_CONTROL_AGENTS_TTL failed: ${message(error)}`);
+      fault(st, $, 'error', 'unsetting-launch-handoff-failed', 'startSession', error, `cache-live-control: unsetting CACHE_LIVE_CONTROL_MAIN_TTL/CACHE_LIVE_CONTROL_SUBAGENT_TTL/CACHE_LIVE_CONTROL_AGENTS_TTL failed: ${message(error)}`);
     }
     try {
       await scopeLaunch1h(st, $, mainChosen);
@@ -489,6 +535,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   const st: State = {
     logWork: Promise.resolve(),
     logFailed: false,
+    settings: options,
     options: resolved,
     raise: newRaise(resolved.raiseAfter),
     errors: [],
@@ -499,16 +546,13 @@ export const register: Register = (on: On, options: PluginOptions) => {
     mainTurnRunning: false,
     mainTyped: 0,
     agents: new Map(),
-    guard: {
-      mode: resolved.guard ?? 'off',
-      floor: resolved.guardFloor ?? DEFAULT_FLOOR,
-      ...(resolved.guardPrice === undefined ? {} : { price: resolved.guardPrice }),
-    },
+    guard: guardConfig(resolved),
     events: [],
     conversation: 0,
   };
 
   on('session.start', async ($, e, next) => {
+    await ready(st, $);
     const result = await next(e);
     await startSession(st, $);
     return result;
@@ -521,6 +565,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // turn.start carries no agentId today; it is read in case a sub-agent's turn
   // ever carries one. turn.complete fires for aborted turns too.
   on('turn.start', async ($, e, next) => {
+    await ready(st, $);
     try {
       if ((e as { agentId?: string }).agentId === undefined) {
         st.mainTurnRunning = true;
@@ -542,6 +587,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // A request is noted without holding it, and the stream itself passes through
   // untouched; a sub-agent's usage waits for its record.
   on('turn.step', async function* ($, e, next) {
+    await ready(st, $);
     if (e.agentId === undefined) {
       recordStep(st, $, 'main').catch((error: unknown) => {
         fault(st, $, 'warning', 'noting-a-main-request-for-the-warm-cache-warning-failed', 'turn.step', error, `cache-live-control: noting a main request for the warm-cache warning failed: ${message(error)}`, true);
@@ -558,6 +604,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   // A new sub-agent's name and parent label it for the resume guard.
   on('agent.spawn', async ($, e, next) => {
+    await ready(st, $);
     const result = await next(e);
     if (result.agentId !== undefined) {
       await spawned(st, $, result.agentId, {
@@ -570,6 +617,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   // The resume guard: a SendMessage to a cold, large sub-agent.
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    await ready(st, $);
     const call = e as unknown as { to?: unknown; message?: unknown };
     if (typeof call.to !== 'string' || typeof call.message !== 'string') return next(e);
     const checked = await checkSend(st, $, call.to, call.message);
@@ -580,7 +628,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return { ...result, context: [...(result.context ?? []), checked.warn] };
   });
 
-  on('command.run', { command: COMMAND }, async ($, e) => runCommand(st, $, e.args));
+  on('command.run', { command: COMMAND }, async ($, e) => {
+    await ready(st, $);
+    return runCommand(st, $, e.args);
+  });
 
   // A prompt that wakes an idle session (any origin: typed, a background
   // task's return, a scheduled trigger) is weighed for the auto-raise first, so
@@ -591,6 +642,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // the one last told. prompt.submit is the main chat's alone: a sub-agent's
   // prompt goes through agent.spawn, and the input carries no agentId.
   on('prompt.submit', async ($, e, next) => {
+    await ready(st, $);
     let stamp: State['submitted'];
     if (e.turnId === undefined && (await weighWake(st, $))) {
       stamp = { at: st.records.main?.at };
@@ -618,6 +670,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // A main-chat compaction takes the note out: the next prompt carries it
   // again. It also rewrites the prefix: the wake after it is no expiry.
   on('session.compact', async ($, e, next) => {
+    await ready(st, $);
     const result = await next(e);
     if (forgetsNotice(e, result)) {
       delete st.noticed;
@@ -631,6 +684,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // the one that follows): the next one has not read the note, and the
   // auto-raise counts its session over.
   on('session.end', async ($, e, next) => {
+    await ready(st, $);
     delete st.noticed;
     await restartRaise(st, $, onSessionEnd, 'end');
     endAgents(st);

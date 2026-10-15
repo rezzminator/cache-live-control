@@ -256,6 +256,49 @@ describe('launch handoff', () => {
   });
 });
 
+describe('option variables', () => {
+  // The kit gives the plugin its manifest defaults only, so the variables are what
+  // sets an option here: the adapter reads each one and the options layer decides.
+  const VARIABLES = {
+    CACHE_LIVE_CONTROL_TTL_NOTICE: '1',
+    CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES: '2',
+    CACHE_LIVE_CONTROL_RESUME_GUARD: 'block',
+    CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS: '50k',
+    CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE: '3',
+    CACHE_LIVE_CONTROL_SUMMARIES: 'block',
+  };
+
+  test('every variable reaches the hook that decides on its option', async ($, on) => {
+    const w = world(on, { ...VARIABLES, [MAIN]: '5m' });
+    const contexts: (readonly string[] | undefined)[] = [];
+    on('prompt.submit', async (_$, e) => {
+      contexts.push(e.context);
+      return { text: e.text, context: e.context };
+    });
+    await $.session.start(START);
+    await $.prompt.submit(prompt('one'));
+    expect(contexts[0]?.[0]).toMatch(/^Prompt cache: this chat's cache lives 5 minutes\./);
+    expect((await $.command.run(run(''))).text).toBe(
+      'main 5m (CLAUDE_CODE_PROMPT_CACHE_TTL set outside this plugin, cold) · agents automatic (' + AGENTS_AUTO + ', cold) · auto-raise counting 0 of 2 expiries · resume-guard block (floor 50k, $3/M) · summaries off (sends x-cache-live-control-summaries: block; a gateway must answer them)',
+    );
+    expect(w.env.get('ANTHROPIC_CUSTOM_HEADERS')).toMatch(/x-cache-live-control-summaries: block/);
+  });
+
+  test('a bad variable is named by /cache and leaves the default over the option', async ($, on) => {
+    world(on, { CACHE_LIVE_CONTROL_RESUME_GUARD: 'maybe', CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES: ' ' });
+    await $.session.start(START);
+    expect((await $.command.run(run(''))).text).toMatch(/ · auto-raise off · resume-guard off · summaries on · CACHE_LIVE_CONTROL_RESUME_GUARD "maybe" ignored: use off, warn or block$/);
+  });
+
+  test('CACHE_LIVE_CONTROL_SUBAGENT_TTL sets the sub-agents at start and is consumed', async ($, on) => {
+    const w = world(on, { CACHE_LIVE_CONTROL_SUBAGENT_TTL: '1h' });
+    await $.session.start(START);
+    expect(w.env.get(AGENTS)).toBe('1h');
+    expect(w.env.has('CACHE_LIVE_CONTROL_SUBAGENT_TTL')).toBe(false);
+    expect((await $.command.run(run(''))).text).toMatch(/ · agents 1h \(set at launch, cold\) · /);
+  });
+});
+
 describe('warm-cache warning', () => {
   test('turn.step passes the stream through unchanged and records the request', async ($, on) => {
     world(on, { [MAIN]: '1h' });

@@ -210,20 +210,30 @@ Set these through `/config`, or under
 `settings.json`. The key must be the full plugin id: Claude Code silently
 ignores options under any other key.
 
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `mainTtl` | empty | The main chat's TTL at session start: `5m`, `1h`, or empty to leave it automatic. |
-| `subagentTtl` | empty | The sub-agents' TTL at session start, the same way. |
-| `ttlNotice` | `false` | Tell the main chat's model which TTL it runs on, and how to delegate on it (below). |
-| `raiseAfterExpiries` | empty (off) | A whole number of 1 or more: on a main chat at 5m, the Nth wake-up to an expired cache goes out at 1h, and main stays 1h (below). |
-| `resumeGuard` | empty (off) | `off`, `warn` or `block`: what to do with a `SendMessage` to a cold, large sub-agent ([below](#-sub-agent-cache-protection)). |
-| `resumeGuardMinTokens` | `60000` | The context, in tokens (`60000` or `60k`), below which a cold resume passes: it costs about what a fresh agent does. |
-| `resumeGuardPrice` | empty | USD per million base input tokens. Set it to see dollars beside the tokens; the plugin owns no price table. |
-| `summaries` | empty (allow) | `block`, `allow` or empty: `block` starts the session with the sub-agent progress summaries stopped ([below](#sub-agent-progress-summaries)); empty or `allow` keeps Claude Code's behaviour. |
+| Option | Environment variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `mainTtl` | `CACHE_LIVE_CONTROL_MAIN_TTL` | empty | The main chat's TTL at session start: `5m`, `1h`, or empty to leave it automatic. |
+| `subagentTtl` | `CACHE_LIVE_CONTROL_SUBAGENT_TTL` | empty | The sub-agents' TTL at session start, the same way. |
+| `ttlNotice` | `CACHE_LIVE_CONTROL_TTL_NOTICE` | `false` | Tell the main chat's model which TTL it runs on, and how to delegate on it (below). |
+| `raiseAfterExpiries` | `CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES` | empty (off) | A whole number of 1 or more: on a main chat at 5m, the Nth wake-up to an expired cache goes out at 1h, and main stays 1h (below). |
+| `resumeGuard` | `CACHE_LIVE_CONTROL_RESUME_GUARD` | empty (off) | `off`, `warn` or `block`: what to do with a `SendMessage` to a cold, large sub-agent ([below](#-sub-agent-cache-protection)). |
+| `resumeGuardMinTokens` | `CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS` | `60000` | The context, in tokens (`60000` or `60k`), below which a cold resume passes: it costs about what a fresh agent does. |
+| `resumeGuardPrice` | `CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE` | empty | USD per million base input tokens. Set it to see dollars beside the tokens; the plugin owns no price table. |
+| `summaries` | `CACHE_LIVE_CONTROL_SUMMARIES` | empty (allow) | `block`, `allow` or empty: `block` starts the session with the sub-agent progress summaries stopped ([below](#sub-agent-progress-summaries)); empty or `allow` keeps Claude Code's behaviour. |
+
+Every option is also read from the environment variable in its row, so one
+`env` block configures it with no plugin settings: `CACHE_LIVE_CONTROL_` and
+the option in upper snake case. The variable beats the option, the option
+beats the default. A variable that is unset or blank is absent. A boolean
+reads `1`, `0`, `true` or `false` in any case; every other option reads the
+value its row describes, and `mainTtl` and `subagentTtl` also read `auto`
+([Launchers](#-launchers)). A bad variable is named by `/cache`
+(`CACHE_LIVE_CONTROL_RESUME_GUARD "maybe" ignored: use off, warn or block`)
+and leaves the option at its default: the option does not stand in for it.
 
 An option applies once, when the session starts, and never over a variable
-already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h)
-or a launcher's handoff (below). A bad value is ignored, and `/cache` names it.
+already set at launch (`CLAUDE_CODE_PROMPT_CACHE_TTL=1h claude` keeps 1h). A
+bad option value is ignored, and `/cache` names it.
 
 `ttlNotice` (opt-in, off by default) puts a short note beside the main chat's
 prompt, which the model reads and you never see: on the first prompt, and on
@@ -455,17 +465,19 @@ the piece off.
 ## 🧩 Launchers
 
 A program that starts Claude Code (Professor's `pfm` does; any launcher
-may) hands the plugin its starting TTLs through two variables the plugin
-owns, never through Claude Code's own, so the plugin stays the only writer
-of `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`:
+may) hands the plugin its starting TTLs through variables the plugin owns,
+never through Claude Code's own, so the plugin stays the only writer of
+`CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`.
+They are the environment variables of the options `mainTtl` and `subagentTtl`:
 
 | Variable | Value |
 | --- | --- |
 | `CACHE_LIVE_CONTROL_MAIN_TTL` | The main chat's starting TTL: `5m`, `1h`, or `auto` for automatic (empty counts as not given) |
-| `CACHE_LIVE_CONTROL_AGENTS_TTL` | The sub-agents', the same way |
+| `CACHE_LIVE_CONTROL_SUBAGENT_TTL` | The sub-agents', the same way |
+| `CACHE_LIVE_CONTROL_AGENTS_TTL` | The sub-agents' variable under its earlier name; read when `CACHE_LIVE_CONTROL_SUBAGENT_TTL` is unset or blank |
 
 ```sh
-CACHE_LIVE_CONTROL_MAIN_TTL=1h CACHE_LIVE_CONTROL_AGENTS_TTL=5m claude
+CACHE_LIVE_CONTROL_MAIN_TTL=1h CACHE_LIVE_CONTROL_SUBAGENT_TTL=5m claude
 ```
 
 At session start, once per process, per party, the first that is set wins:
@@ -477,10 +489,11 @@ At session start, once per process, per party, the first that is set wins:
 4. Main chat only: `ENABLE_PROMPT_CACHING_1H`, kept for the main chat (see
    How it works).
 
-Both handoff variables are then unset in the process: a program the chat
+The handoff variables are then unset in the process: a program the chat
 starts never inherits them, and a plugin reload never applies them again. A
-bad value is ignored and named by `/cache`
-(`CACHE_LIVE_CONTROL_MAIN_TTL "2h" ignored: use 5m, 1h or auto`).
+bad value is named by `/cache`
+(`CACHE_LIVE_CONTROL_MAIN_TTL "2h" ignored: use 5m, 1h or auto`) and that
+party stays automatic: the option does not stand in for it.
 
 The plugin is standalone: it depends on no launcher, and Professor depends
 on it.
