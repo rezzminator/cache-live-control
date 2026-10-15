@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { HANDOFF } from '../plugins/cache-live-control/src/handoff.ts';
 import { ENV, resolveOptions } from '../plugins/cache-live-control/src/options.ts';
 
 describe('resolveOptions', () => {
@@ -129,6 +131,16 @@ describe('the option variables', () => {
       resumeGuardPrice: PRICE,
       summaries: SUMMARIES,
     });
+  });
+
+  // An operator's exported variable outranks the --settings a proof session pins, so the live proof unsets every one.
+  it('has the live proof unset every option variable and handoff spelling before each launch', () => {
+    const script = readFileSync(new URL('../scripts/live-proof.sh', import.meta.url), 'utf8');
+    const loop = /^for v in ([A-Z_ ]+); do\n\s*CLEAR_ENV="\$CLEAR_ENV -u CACHE_LIVE_CONTROL_\$v"/m.exec(script);
+    expect(loop).not.toBeNull();
+    const unset = loop![1]!.trim().split(/\s+/).map((name) => `CACHE_LIVE_CONTROL_${name}`);
+    const read = new Set([...Object.values(ENV), ...Object.values(HANDOFF).flat()]);
+    expect(unset.sort()).toEqual([...read].sort());
   });
 
   // [case, option, env, resolved]: the variable beats the option, which beats the default;
