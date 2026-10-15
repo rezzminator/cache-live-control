@@ -2,6 +2,18 @@
 
 Every release of cache-live-control. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-live-control--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+### Added
+- Every option is also read from the environment variable `CACHE_LIVE_CONTROL_{OPTION}` (`CACHE_LIVE_CONTROL_TTL_NOTICE`, `CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES`, `CACHE_LIVE_CONTROL_RESUME_GUARD`, `CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS`, `CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE`, `CACHE_LIVE_CONTROL_SUMMARIES`, and the launcher variables `CACHE_LIVE_CONTROL_MAIN_TTL` and the new `CACHE_LIVE_CONTROL_SUBAGENT_TTL`): the variable beats the option, the option beats the default, a blank variable is absent, booleans read `1`, `0`, `true` or `false`, and the README options table has a column for each. A bad variable is named by `/cache`.
+
+### Changed
+- A bad launcher variable (`CACHE_LIVE_CONTROL_MAIN_TTL`, `CACHE_LIVE_CONTROL_SUBAGENT_TTL`, `CACHE_LIVE_CONTROL_AGENTS_TTL`) is named and leaves that party automatic; it no longer falls through to the `mainTtl` / `subagentTtl` option. `CACHE_LIVE_CONTROL_AGENTS_TTL` stays as the earlier name of `CACHE_LIVE_CONTROL_SUBAGENT_TTL`. The option `ttlNotice` also reads the strings `1` and `0`.
+
+### Fixed
+- `resumeGuardMinTokens` rejects a `k` value past the safe integers (`9999999999999999999k`), as it already did for plain digits, instead of accepting a floor the guard could never reach.
+- `/cache` no longer names a bad `mainTtl` or `subagentTtl` option when its environment variable decides that party.
+
 ## [0.6.2] — 2026-10-15
 
 ### Fixed
