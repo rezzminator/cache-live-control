@@ -4,6 +4,8 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-10-16
+
 ### Added
 - Every option is also read from the environment variable `CACHE_LIVE_CONTROL_{OPTION}` (`CACHE_LIVE_CONTROL_TTL_NOTICE`, `CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES`, `CACHE_LIVE_CONTROL_RESUME_GUARD`, `CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS`, `CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE`, `CACHE_LIVE_CONTROL_SUMMARIES`, and the launcher variables `CACHE_LIVE_CONTROL_MAIN_TTL` and the new `CACHE_LIVE_CONTROL_SUBAGENT_TTL`): the variable beats the option, the option beats the default, a blank variable is absent, booleans read `1`, `0`, `true` or `false`, and the README options table has a column for each. A bad variable is named by `/cache`.
 
