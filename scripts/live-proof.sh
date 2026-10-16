@@ -89,14 +89,22 @@ cleanup() {
   done
 }
 
+# Every variable that decides a TTL or an option, unset before each launch so the
+# operator's shell never sets what the proof measures: Claude Code's own, and the
+# plugin's `CACHE_LIVE_CONTROL_*` variables (one per option, plus the sub-agents' earlier spelling).
+CLEAR_ENV="-u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"
+for v in MAIN_TTL SUBAGENT_TTL AGENTS_TTL TTL_NOTICE RAISE_AFTER_EXPIRIES RESUME_GUARD RESUME_GUARD_MIN_TOKENS RESUME_GUARD_PRICE SUMMARIES; do
+  CLEAR_ENV="$CLEAR_ENV -u CACHE_LIVE_CONTROL_$v"
+done
+
 # One session: $1 the session id, $2 variable assignments for the launch
-# (every TTL variable and launcher handoff variable is unset first), $3 the --settings file.
+# (every variable in CLEAR_ENV is unset first), $3 the --settings file.
 start() {
   end_session
   # CLAUDE_CONFIG_DIR is passed on explicitly: a tmux server keeps the
   # environment it started with, and the transcripts are read from it.
   $T new-session -d -s proof -x 200 -y 50 -c "$WORK" \
-    "env -u ENABLE_PROMPT_CACHING_1H -u FORCE_PROMPT_CACHING_5M -u CLAUDE_CODE_PROMPT_CACHE_TTL -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL -u CACHE_LIVE_CONTROL_MAIN_TTL -u CACHE_LIVE_CONTROL_AGENTS_TTL \
+    "env $CLEAR_ENV \
      $2 ${CLAUDE_CONFIG_DIR:+CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'} CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 '$CLAUDE_BIN' --model haiku --setting-sources project --settings '$3' \
      --plugin-dir '$ROOT/plugins/cache-live-control' --session-id $1"
   # Boot: the trust dialog defaults to "No, exit", so Down then Enter.

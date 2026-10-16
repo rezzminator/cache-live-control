@@ -21,6 +21,9 @@ in its own process. `README.md` is the behavioural spec.
 - A new behaviour lands in `plugins/cache-live-control/src/` as a pure function with a test watched failing first; the adapter only wires it.
 - A failed read or write of a variable prints a `failed, the TTL may be unchanged` line; it never claims a TTL it did not set.
 - A bad option is ignored by name, and `/cache` shows it.
+- Every option is also a variable `CACHE_LIVE_CONTROL_{OPTION}`, upper snake, listed in the README § Configuration table: variable > option (`pluginConfigs`, `/config`) > default; unset or blank is absent; booleans `1|0|true|false`, any case. `CACHE_LIVE_CONTROL_MAIN_TTL` and `CACHE_LIVE_CONTROL_SUBAGENT_TTL` (`CACHE_LIVE_CONTROL_AGENTS_TTL` its earlier name) also take `auto` and are unset at session start.
+- A bad variable is named by `/cache` and the option's default applies, never the configured option.
+- A new option adds its variable to `ENV` (`plugins/cache-live-control/src/options.ts`) and the adapter's `readOptionEnv`, its README row and its row in `tests/options.test.ts`.
 - The precedence table in the README states Claude Code's behaviour as measured; a claim not re-measured on a new Claude Code release is labelled so.
 - A version bump moves `plugins/cache-live-control/.claude-plugin/plugin.json`, `marketplace.json`, `package.json` and the README badge together; installed copies update only on a new version.
 - Public repo: no machine-absolute paths, personal data or private project names in a tracked file.

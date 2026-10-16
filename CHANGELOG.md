@@ -4,6 +4,38 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-10-16
+
+### Added
+- Every option is also read from the environment variable `CACHE_LIVE_CONTROL_{OPTION}` (`CACHE_LIVE_CONTROL_TTL_NOTICE`, `CACHE_LIVE_CONTROL_RAISE_AFTER_EXPIRIES`, `CACHE_LIVE_CONTROL_RESUME_GUARD`, `CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS`, `CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE`, `CACHE_LIVE_CONTROL_SUMMARIES`, and the launcher variables `CACHE_LIVE_CONTROL_MAIN_TTL` and the new `CACHE_LIVE_CONTROL_SUBAGENT_TTL`): the variable beats the option, the option beats the default, a blank variable is absent, booleans read `1`, `0`, `true` or `false`, and the README options table has a column for each. A bad variable is named by `/cache`.
+
+### Changed
+- A bad launcher variable (`CACHE_LIVE_CONTROL_MAIN_TTL`, `CACHE_LIVE_CONTROL_SUBAGENT_TTL`, `CACHE_LIVE_CONTROL_AGENTS_TTL`) is named and leaves that party automatic; it no longer falls through to the `mainTtl` / `subagentTtl` option. `CACHE_LIVE_CONTROL_AGENTS_TTL` stays as the earlier name of `CACHE_LIVE_CONTROL_SUBAGENT_TTL`. The option `ttlNotice` also reads the strings `1` and `0`.
+
+### Fixed
+- `resumeGuardMinTokens` rejects a `k` value past the safe integers (`9999999999999999999k`), as it already did for plain digits, instead of accepting a floor the guard could never reach.
+- `/cache` no longer names a bad `mainTtl` or `subagentTtl` option when its environment variable decides that party.
+
+## [0.6.3] — 2026-10-15
+
+### Fixed
+- The plugin level log now writes on macOS: its append script no longer passes `--` to `chmod`, which BSD `chmod` reads as a file name and fails on under `set -eu`, so every flush was dropped. A log directory that that starts with a dash is handled as a `./` path instead. The regression tests run the script behind a BSD-style `chmod` shim, so the Linux suite catches it too.
+
+## [0.6.2] — 2026-10-15
+
+### Fixed
+- Failure rows are queued before screen output, so a screen exception still leaves the error or warning in the level log.
+
+## [0.6.1] — 2026-10-15
+
+### Fixed
+- Plugin log writes support cap rotations and hyphen-leading relative log roots on macOS.
+
+## [0.6.0] — 2026-10-14
+
+### Added
+- Append-only plugin logs split into errors, warnings and info under `PLUGIN_LOG_DIR/cache-live-control`, falling back to `$HOME/.local/state/cache-live-control/logs`. Rows carry event, component and session, with bounded rows and size-cap warnings. Failed writes report once per failing streak without changing cache decisions or existing output.
+
 ## [0.5.0] — 2026-10-13
 
 ### Added

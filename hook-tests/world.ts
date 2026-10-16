@@ -13,6 +13,15 @@ export type World = ReturnType<typeof world>;
 
 export function world(on: On, initial: Record<string, string> = {}) {
   const env = new Map(Object.entries(initial));
+  // The kit cannot execute host processes. Capture the real append argv;
+  // root tests/plugin-log.test.ts drives the adapter with a real execFile.
+  const pluginLogRows: { path: string; row: string }[] = [];
+  env.set('HOME', initial.HOME ?? '/hook-test/home');
+  on('session.id', async () => ({ value: 'variant-session' }));
+  on('process.run', async (_$, e) => {
+    for (let i = 6; i < e.argv.length; i += 2) pluginLogRows.push({ path: `${e.argv[4]}/${e.argv[i]}`, row: e.argv[i + 1]! });
+    return { value: { exitCode: 0, stdout: '', stderr: '' } };
+  });
   /** The clock moves only when the test moves it; `fails` makes a read of it throw; `during` runs once inside the next read. */
   let now = 1_000_000_000_000;
   const clock: { fails: boolean; during?: () => Promise<void>; advance: (ms: number) => Promise<void> } = {
@@ -170,6 +179,7 @@ export function world(on: On, initial: Record<string, string> = {}) {
 
   return {
     env,
+    pluginLogRows,
     clock,
     reads,
     during,
