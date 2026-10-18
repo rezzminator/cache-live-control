@@ -253,7 +253,7 @@ function adapter(initial: Record<string, string>, options: Record<string, string
   const env = new Map(Object.entries(initial));
   const logs: string[] = [];
   const controls = {
-    uiFails: false, processFails: false, ttlFails: false, listingFails: false, clockFails: false, toastFails: false, registerFails: false,
+    uiFails: false, processFails: false, ttlFails: false, listingFails: false, clockFails: false, toastFails: false, registerFails: false, registerUnbound: false,
     now: 1_000_000_000_000,
     readFails: (_name: string): boolean => false,
     writeFails: (_name: string): boolean => false,
@@ -269,7 +269,7 @@ function adapter(initial: Record<string, string>, options: Record<string, string
     } },
     clock: { now: async () => { if (controls.clockFails) throw new Error('clock refused'); return controls.now; } },
     session: { id: async () => 'log-session' },
-    command: { register: async () => { if (controls.registerFails) throw new Error('register refused'); return { command: 'cache' }; } },
+    command: { register: async () => { if (controls.registerUnbound) throw new Error('cache-live-control: $.command.register is not available in this mode: no session is bound in this process (the REPL has not mounted and no headless session is built); catch it and carry on'); if (controls.registerFails) throw new Error('register refused'); return { command: 'cache' }; } },
     agent: { list: async () => { if (controls.listingFails) throw new Error('agent list refused'); return []; } },
     ui: { log: (text: string) => { if (controls.uiFails) throw new Error('screen refused'); logs.push(text); }, toast: () => { if (controls.toastFails) throw new Error('toast refused'); } },
     process: { run: async (argv: readonly string[]) => {
@@ -387,6 +387,21 @@ test('each failure door preserves its outcome and records its chosen level and s
     expect.soft(rows.length, door.event).toBeGreaterThan(0);
     for (const row of rows) expect(row).toMatchObject({ level: door.level, where: `hooks/cache-live-control.ts#${door.where}`, detail: { error: expect.any(String) } });
   }
+});
+
+test('a command registration refused for want of a bound session logs info, no error row and no screen line; any other refusal still logs an error', async () => {
+  const home = await temp(); const a = adapter({ HOME: home });
+  a.controls.registerUnbound = true;
+  await a.emit('session.start', { cwd: '.' }); await a.end();
+  const dir = join(home, '.local/state/cache-live-control/logs');
+  expect(await contents(join(dir, 'errors.jsonl'))).not.toContain('registering-cache-failed');
+  const rows = (await contents(join(dir, 'info.jsonl'))).split('\n').filter(Boolean).map((s) => JSON.parse(s)).filter((r) => r.event === 'registering-cache-skipped');
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ level: 'info', where: 'hooks/cache-live-control.ts#startSession' });
+  expect(a.logs.join('\n')).not.toContain('registering /cache failed');
+  const other = adapter({ HOME: home }); other.controls.registerFails = true;
+  await other.emit('session.start', { cwd: '.' }); await other.end();
+  expect(await contents(join(dir, 'errors.jsonl'))).toContain('registering-cache-failed');
 });
 
 test('resume decisions retain block, override and warn behavior with their specified rows', async () => {

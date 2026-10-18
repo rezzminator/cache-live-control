@@ -4,6 +4,7 @@ import { formatEvents, pushEvent, type Event } from '../src/events.ts';
 import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard.ts';
 import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
 import { launchChange } from '../src/launch.ts';
+import { isUnboundMode } from '../src/mode.ts';
 import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
 import { resolveOptions, type EnvValues, type ResolvedOptions } from '../src/options.ts';
 import { parseArgs, type Settings } from '../src/parse.ts';
@@ -272,6 +273,11 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
       immediate: true,
     });
   } catch (error) {
+    // A headless process has no session to register on: expected there, so an info row, no error and no screen line.
+    if (isUnboundMode(message(error))) {
+      plog(st, $, 'info', 'registering-cache-skipped', `cache-live-control: /${COMMAND} not registered, no session is bound in this mode`, 'startSession', { error: message(error) });
+      return;
+    }
     fault(st, $, 'error', 'registering-cache-failed', 'startSession', error, `cache-live-control: registering /${COMMAND} failed: ${message(error)}`);
   }
 }

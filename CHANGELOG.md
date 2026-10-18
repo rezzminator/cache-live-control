@@ -4,6 +4,11 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-10-18
+
+### Fixed
+- A headless run (no REPL mounted, no session bound) no longer logs `registering /cache failed` as an error row and a screen line: the host's "no session is bound in this mode" refusal is expected there and is recorded as the info row `registering-cache-skipped`. Any other refusal of the registration still logs the error.
+
 ## [0.6.4] — 2026-10-16
 
 ### Added
