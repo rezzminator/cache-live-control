@@ -78,7 +78,7 @@ case "$dir" in -*) dir=./$dir;; esac
 plugin=$2
 shift 2
 case "$plugin" in ''|*[!a-z0-9-]*) echo "plugin log $dir: invalid plugin name" >&2; exit 2;; esac
-mkdir -p -- "$dir"
+mkdir -p -- "$dir" || { echo "plugin log $dir: cannot create directory" >&2; exit 1; }
 cap_row() {
   printf '{"ts":"%s","plugin":"%s","level":"warning","event":"log-capped","msg":"%s","where":"src/plugin-log.ts#APPEND_SCRIPT"%s,"detail":%s}' "$ts" "$plugin" "$cap_msg" "$session_field" "$cap_detail"
 }
