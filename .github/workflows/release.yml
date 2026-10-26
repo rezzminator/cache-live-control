@@ -1,28 +1,74 @@
 name: release
 
 on:
-  push:
-    tags: ['cache-live-control--v*']
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
+  check:
+    name: check
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: make check
+
+  release:
+    name: release
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: The tag sits on main
-        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: The tag matches the manifest and CHANGELOG
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: make release
+
+  publish:
+    name: publish
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The tag is new
+        id: tag
         run: |
-          v="${GITHUB_REF_NAME#cache-live-control--v}"
-          test "$v" = "$(node -p 'require("./plugins/cache-live-control/.claude-plugin/plugin.json").version')"
-          scripts/release-check.sh
+          v="$(node -p 'require("./plugins/cache-live-control/.claude-plugin/plugin.json").version')"
+          tag="cache-live-control--v$v"
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || rc=$?
+          if [ "$rc" -eq 0 ]; then echo "::error::$tag already exists"; exit 1; fi
+          if [ "$rc" -ne 2 ]; then echo "::error::could not look up tag $tag (git ls-remote exit $rc)"; exit 1; fi
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Release notes from the CHANGELOG
+        env:
+          v: ${{ steps.tag.outputs.v }}
+        run: |
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ || /^\[/ {f=0} f' CHANGELOG.md > notes.md
           test -s notes.md
-      - run: gh release create "$GITHUB_REF_NAME" --title "cache-live-control ${GITHUB_REF_NAME#cache-live-control--v}" --notes-file notes.md --verify-tag
+      - run: gh release create "$tag" --target "${{ github.event.pull_request.merge_commit_sha }}" --title "cache-live-control $v" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}
+          tag: ${{ steps.tag.outputs.tag }}
+          v: ${{ steps.tag.outputs.v }}
