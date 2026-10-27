@@ -4,6 +4,8 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+- Installs as `cache-live-control@professor` from the professor marketplace; the repo's own marketplace file is gone.
+
 ## [0.6.5] — 2026-10-27
 
 ### Fixed
