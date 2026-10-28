@@ -464,9 +464,9 @@ the piece off.
 
 ## 🧩 Launchers
 
-A program that starts Claude Code (Professor's `pfm` does; any launcher
-may) hands the plugin its starting TTLs through variables the plugin owns,
-never through Claude Code's own, so the plugin stays the only writer of
+A program that starts Claude Code may hand the plugin its starting TTLs
+through variables the plugin owns, never through Claude Code's own, so the
+plugin stays the only writer of
 `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`.
 They are the environment variables of the options `mainTtl` and `subagentTtl`:
 
@@ -495,8 +495,7 @@ bad value is named by `/cache`
 (`CACHE_LIVE_CONTROL_MAIN_TTL "2h" ignored: use 5m, 1h or auto`) and that
 party stays automatic: the option does not stand in for it.
 
-The plugin is standalone: it depends on no launcher, and Professor depends
-on it.
+The plugin is standalone: it depends on no launcher.
 
 ## ❓ FAQ
 
