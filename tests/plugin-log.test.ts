@@ -1,257 +1,36 @@
 /// <reference path="../types/claude-code.d.ts" />
+// The adapter's wiring onto the vendored plugin-log library: which doors log at which level, and what reaches the
+// screen. The library itself (rows, rotation, the queue) is covered by its canonical conformance tests.
 import type { EngineInterface, On } from 'claude-code';
 import { register } from '../plugins/cache-live-control/hooks/cache-live-control.ts';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, test } from 'vitest';
-import { appendArgv, levelRow, pluginLogDir, PluginLogQueue, PLUGIN_LOG_CAP_BYTES, ROW_MAX_BYTES } from '../plugins/cache-live-control/src/plugin-log.ts';
 
 const exec = promisify(execFile);
 async function contents(path: string) {
   try { return await readFile(path, 'utf8'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''; throw error; }
 }
-async function size(path: string) {
-  try { return (await stat(path)).size; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }
-}
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
 async function temp() { const d = await mkdtemp(join(tmpdir(), 'cache-plugin-log-')); dirs.push(d); return d; }
-const fields = { plugin: 'cache-live-control', level: 'error' as const, event: 'ttl-change-failed', msg: 'write refused', where: 'hooks/cache-live-control.ts#runCommand' };
-const now = 1791991231123;
-const row = (level: 'error' | 'warning' | 'info') => ({ level, row: levelRow({ ...fields, level }, now) });
+const fields = { plugin: 'cache-live-control', where: 'hooks/cache-live-control.ts#runCommand' };
 async function run(argv: readonly string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
   try { const { stdout, stderr } = await exec(argv[0]!, argv.slice(1), { timeout: 5000, ...options }); return { exitCode: 0, stdout, stderr }; }
   catch (error) { const e = error as Error & { code?: number; stdout?: string; stderr?: string }; return { exitCode: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? e.message }; }
 }
-
-test('levelRow ordered contract and bounded UTF-8 rows', () => {
-  for (const extra of [{}, { session: 's1', detail: { error: 'write refused' } }, { msg: '😀\\\n'.repeat(5000), detail: { error: 'x'.repeat(9000) } }, { event: 'e'.repeat(9000), where: 'w'.repeat(9000), session: 's'.repeat(9000) }]) {
-    const input = { ...fields, ...extra };
-    const text = levelRow(input, now);
-    const parsed = JSON.parse(text);
-    expect(text.endsWith('\n')).toBe(true);
-    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(ROW_MAX_BYTES);
-    expect(parsed.ts).toBe('2026-10-14T15:20:31.123Z');
-    expect(Object.keys(parsed)).toEqual(['ts', 'plugin', 'level', 'event', 'msg', 'where', ...('session' in extra ? ['session'] : []), ...('detail' in extra || Buffer.byteLength(JSON.stringify({ ts: parsed.ts, ...input }) + '\n') > ROW_MAX_BYTES ? ['detail'] : [])]);
-    expect(parsed.level).toBe('error');
-    for (const key of ['plugin', 'event', 'msg', 'where']) expect(parsed[key].length).toBeGreaterThan(0);
-    if (Buffer.byteLength(JSON.stringify({ ts: parsed.ts, ...input }) + '\n') > ROW_MAX_BYTES) expect(parsed.detail).toEqual({ truncated: true, bytes: Buffer.byteLength(JSON.stringify({ ts: parsed.ts, ...input }) + '\n') });
-    else expect(parsed).toEqual({ ts: '2026-10-14T15:20:31.123Z', ...input });
-  }
-  expect(ROW_MAX_BYTES).toBe(4096);
-});
-
-test('pluginLogDir chooses configured root, HOME fallback or no directory', () => {
-  for (const [root, home, expected] of [['/x/logs', '/h/u', '/x/logs/auto-effort'], [undefined, '/h/u', '/h/u/.local/state/auto-effort/logs'], [undefined, undefined, undefined]] as const) expect(pluginLogDir(root, home, 'auto-effort')).toBe(expected);
-});
-
-test('APPEND_SCRIPT writes all levels with private modes and literal argv', async () => {
-  for (const existing of [false, true]) {
-    const parent = await temp(); await chmod(parent, 0o755);
-    const legacy = join(parent, 'legacy.log'); await writeFile(legacy, 'legacy', { mode: 0o644 });
-    const d = join(parent, "logs ' $(echo no)");
-    if (existing) {
-      await mkdir(d, { mode: 0o755 });
-      for (const file of ['errors', 'warnings', 'info']) {
-        await writeFile(join(d, `${file}.jsonl`), '', { mode: 0o644 });
-        await writeFile(join(d, `${file}.jsonl.1`), `prior-${file}\n`, { mode: 0o644 });
-      }
-    }
-    for (const argv of appendArgv(d, fields.plugin, ['error', 'warning', 'info'].map((l) => row(l as 'error' | 'warning' | 'info')))) expect((await run(argv)).exitCode).toBe(0);
-    for (const [level, file] of [['error', 'errors'], ['warning', 'warnings'], ['info', 'info']] as const) {
-      expect(await contents(join(d, `${file}.jsonl`))).toBe(row(level).row);
-      if (!existing) expect((await stat(join(d, `${file}.jsonl`))).mode & 0o777).toBe(0o600);
-      if (existing) {
-        expect(await contents(join(d, `${file}.jsonl.1`))).toBe(`prior-${file}\n`);
-      }
-    }
-    if (!existing) expect((await stat(d)).mode & 0o777).toBe(0o700);
-    expect((await stat(parent)).mode & 0o777).toBe(0o755);
-    expect((await stat(legacy)).mode & 0o777).toBe(0o644);
-    expect(await contents(legacy)).toBe('legacy');
-  }
-});
-
-test.each([
-  { relative: false, existing: false }, { relative: true, existing: false },
-  { relative: false, existing: true }, { relative: true, existing: true },
-])('APPEND_SCRIPT appends and caps rows with BSD command shim: %j', async ({ relative, existing }) => {
-  const parent = await temp();
-  const bin = join(parent, 'bin'); await mkdir(bin);
-  await writeFile(join(bin, 'chmod'), `#!/bin/sh
-for arg do
-  case "$arg" in
-    --) printf 'chmod: --: No such file or directory\\n' >&2; exit 1;;
-    -*) printf 'chmod: illegal option -- %s\\n' "$arg" >&2; exit 1;;
-  esac
-done
-exec /bin/chmod "$@"
-`, { mode: 0o755 });
-  const configured = relative ? "-logs ' $(echo no)" : join(parent, "logs ' $(echo no)");
-  const dir = pluginLogDir(configured, undefined, fields.plugin)!;
-  const disk = relative ? join(parent, dir) : dir;
-  const capped = 'x'.repeat(PLUGIN_LOG_CAP_BYTES + 1);
-  if (existing) {
-    await mkdir(disk, { recursive: true, mode: 0o755 });
-    for (const file of ['errors', 'warnings', 'info']) {
-      await writeFile(join(disk, `${file}.jsonl`), file === 'info' ? '' : capped, { mode: 0o644 });
-      await writeFile(join(disk, `${file}.jsonl.1`), `prior-${file}\n`, { mode: 0o644 });
-    }
-  }
-  const rows = [row('error'), row('warning'), row('info')];
-  const result = await run(appendArgv(dir, fields.plugin, rows)[0]!, {
-    cwd: parent, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}` },
-  });
-  expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stderr).toBe('');
-  expect(await readFile(join(disk, 'errors.jsonl'), 'utf8')).toBe(rows[0]!.row);
-  expect(await readFile(join(disk, 'info.jsonl'), 'utf8')).toBe(rows[2]!.row);
-  const warnings = await readFile(join(disk, 'warnings.jsonl'), 'utf8');
-  if (existing) {
-    const parsed = warnings.trim().split('\n').map((line) => JSON.parse(line));
-    expect(parsed.map((r) => r.event)).toEqual(['log-capped', 'log-capped', fields.event]);
-    expect(warnings.endsWith(rows[1]!.row)).toBe(true);
-    for (const file of ['errors', 'warnings', 'info']) {
-      expect(await readFile(join(disk, `${file}.jsonl.1`), 'utf8')).toBe(file === 'info' ? 'prior-info\n' : capped);
-    }
-  } else expect(warnings).toBe(rows[1]!.row);
-  if (!existing) {
-    for (const file of ['errors', 'warnings', 'info']) expect((await stat(join(disk, `${file}.jsonl`))).mode & 0o777).toBe(0o600);
-    expect((await stat(disk)).mode & 0o777).toBe(0o700);
-  }
-});
-
-test('APPEND_SCRIPT renames capped level and appends contract log-capped warning', async () => {
-  const d = await temp();
-  expect(PLUGIN_LOG_CAP_BYTES).toBe(20_971_520);
-  await writeFile(join(d, 'errors.jsonl'), 'x'.repeat(20_971_521));
-  await writeFile(join(d, 'warnings.jsonl.1'), 'old warnings unchanged\n', { mode: 0o644 });
-  expect((await run(appendArgv(d, fields.plugin, [row('error')])[0]!)).exitCode).toBe(0);
-  expect(await contents(join(d, 'warnings.jsonl.1'))).toBe('old warnings unchanged\n');
-  expect(await size(join(d, 'errors.jsonl.1'))).toBe(20_971_521);
-  expect(await contents(join(d, 'errors.jsonl'))).toBe(row('error').row);
-  const warningText = await contents(join(d, 'warnings.jsonl'));
-  const warning = JSON.parse(warningText);
-  expect(warning).toMatchObject({ plugin: fields.plugin, level: 'warning', event: 'log-capped', where: 'src/plugin-log.ts#APPEND_SCRIPT', detail: { file: 'errors.jsonl', bytes: 20_971_521 } });
-  expect(warning.ts).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
-  expect(Buffer.byteLength(warningText)).toBeLessThanOrEqual(4096);
-});
-
-test.skipIf(process.getuid?.() === 0)('APPEND_SCRIPT reports unwritable directory (skip-because:superuser)', async () => {
-  for (const kind of ['directory', 'file']) {
-    const d = await temp(); const target = kind === 'directory' ? d : join(d, 'errors.jsonl');
-    if (kind === 'file') await writeFile(target, 'unchanged\n');
-    await chmod(target, kind === 'directory' ? 0o500 : 0o400);
-    const result = await run(appendArgv(d, fields.plugin, [row('error')])[0]!);
-    expect((await stat(target)).mode & 0o777).toBe(kind === 'directory' ? 0o500 : 0o400);
-    await chmod(target, kind === 'directory' ? 0o700 : 0o600);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain(d);
-    if (kind === 'file') expect(await contents(target)).toBe('unchanged\n');
-  }
-});
-
-test('APPEND_SCRIPT reports failed lookup/write rather than absence', async () => {
-  const d = await temp();
-  const file = join(d, 'not-directory'); await writeFile(file, 'x');
-  const result = await run(appendArgv(file, fields.plugin, [row('warning')])[0]!);
-  expect(result.exitCode).not.toBe(0); expect(result.stderr).toContain(file);
-});
-
-test('PluginLogQueue serializes concurrent flushes and batches at 64 rows', async () => {
-  const d = await temp(); const notices: string[] = []; const queue = new PluginLogQueue(d, fields.plugin, (s) => notices.push(s));
-  for (let i = 0; i < 130; i++) queue.add(row('error'));
-  const sizes: number[] = []; let active = 0; let peak = 0;
-  const runner = async (argv: readonly string[]) => { active++; peak = Math.max(peak, active); sizes.push((argv.length - 6) / 2); const result = await run(argv); active--; return result; };
-  await Promise.all([queue.flush(runner), queue.flush(runner)]);
-  expect(sizes).toEqual([64, 64, 2]); expect(peak).toBe(1); expect(notices).toEqual([]);
-  expect((await contents(join(d, 'errors.jsonl'))).split('\n').filter(Boolean)).toHaveLength(130);
-  expect(appendArgv(d, fields.plugin, Array.from({ length: 65 }, () => row('error'))).map((a) => (a.length - 6) / 2)).toEqual([64, 1]);
-});
-
-test('PluginLogQueue contains rejection/nonzero failures, counts dropped rows and rearms after success', async () => {
-  const notices: string[] = []; const queue = new PluginLogQueue('/logs/cache-live-control', fields.plugin, (s) => notices.push(s));
-  queue.add(row('error')); queue.add(row('warning'));
-  expect(await queue.flush(async () => { throw new Error('cannot start'); })).toMatchObject({ dropped: 2 });
-  queue.add(row('info')); await queue.flush(async () => ({ exitCode: 1, stdout: '', stderr: 'disk full\nmore' }));
-  expect(notices).toHaveLength(1); expect(notices[0]).toContain('/logs/cache-live-control'); expect(notices[0]).toContain('cannot start'); expect(notices[0]).toContain('2');
-  queue.add(row('info')); await queue.flush(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
-  queue.add(row('error')); await queue.flush(async () => ({ exitCode: 1, stdout: '', stderr: 'disk full\nmore' }));
-  expect(notices).toHaveLength(2); expect(notices[1]).toContain('disk full');
-  let calls = 0; await queue.flush(async () => { calls++; return { exitCode: 0, stdout: '', stderr: '' }; }); expect(calls).toBe(0);
-});
-
-test('PluginLogQueue missing env notice uses exact off message once', async () => {
-  const notices: string[] = []; const queue = new PluginLogQueue(undefined, fields.plugin, (s) => notices.push(s));
-  for (let i = 0; i < 2; i++) { queue.add(row('info')); await queue.flush(run); }
-  expect(notices).toEqual(['plugin log off: no PLUGIN_LOG_DIR and no HOME']);
-});
-
-test('APPEND_SCRIPT concurrent writers preserve complete JSONL rows', async () => {
-  const d = await temp(); const rows = Array.from({ length: 128 }, () => row('info'));
-  await Promise.all([0, 1].map(async () => { for (const argv of appendArgv(d, fields.plugin, rows)) expect((await run(argv)).exitCode).toBe(0); }));
-  const lines = (await contents(join(d, 'info.jsonl'))).trimEnd().split('\n');
-  expect(lines).toHaveLength(256); for (const line of lines) expect(JSON.parse(line).event).toBe(fields.event);
-});
-
-test('APPEND_SCRIPT bounds warnings generated while capping another level', async () => {
-  for (const session of [undefined, 's"\\\n😀 $(touch nope)']) {
-    const d = await temp(); await chmod(d, 0o755);
-    for (const [file, text] of [['errors', 'x'], ['warnings', 'w']] as const) {
-      await writeFile(join(d, `${file}.jsonl`), text.repeat(20_971_521), { mode: 0o644 });
-      await writeFile(join(d, `${file}.jsonl.1`), 'old', { mode: 0o644 });
-    }
-    const trigger = levelRow({ ...fields, ...(session === undefined ? {} : { session }), detail: { session: 'fake session only inside detail', nested: { session: 'also fake' } } }, now);
-    expect((await run(appendArgv(d, fields.plugin, [{ level: 'error', row: trigger }])[0]!)).exitCode).toBe(0);
-    expect(await size(join(d, 'warnings.jsonl.1'))).toBe(20_971_521);
-    const warningText = await contents(join(d, 'warnings.jsonl'));
-    expect(Buffer.byteLength(warningText)).toBeLessThan(4096);
-    const warnings = warningText.trimEnd().split('\n').map((s) => JSON.parse(s));
-    expect(warnings.map((r) => r.detail.file)).toEqual(['warnings.jsonl', 'errors.jsonl']);
-    for (const warning of warnings) {
-      expect(warning).toMatchObject({ ts: '2026-10-14T15:20:31.123Z', event: 'log-capped', plugin: fields.plugin, level: 'warning', where: 'src/plugin-log.ts#APPEND_SCRIPT' });
-      expect.soft(warning.session).toBe(session);
-      expect(Object.keys(warning)).toEqual(['ts', 'plugin', 'level', 'event', 'msg', 'where', ...(session === undefined ? [] : ['session']), 'detail']);
-    }
-    expect(await contents(join(d, 'errors.jsonl'))).toBe(trigger);
-  }
-});
-
-test('APPEND_SCRIPT bounds a cap warning with a near-limit known session', async () => {
-  for (const session of ['😀"\\\n'.repeat(1500), 'x'.repeat(9000), '\\u1234\ud800'.repeat(1500)]) {
-    const d = await temp();
-    for (const file of ['errors', 'warnings']) await writeFile(join(d, `${file}.jsonl`), 'x'.repeat(20_971_521));
-    const trigger = levelRow({ ...fields, event: 'e', msg: 'm', where: 'w', session }, now);
-    const triggerSession = JSON.parse(trigger).session as string;
-    expect((await run(appendArgv(d, fields.plugin, [{ level: 'error', row: trigger }])[0]!)).exitCode).toBe(0);
-    const text = await contents(join(d, 'warnings.jsonl'));
-    const lines = text.trimEnd().split('\n'); expect(lines).toHaveLength(2);
-    for (const [i, file] of ['warnings.jsonl', 'errors.jsonl'].entries()) {
-      const original = { ts: '2026-10-14T15:20:31.123Z', plugin: fields.plugin, level: 'warning', event: 'log-capped', msg: 'level file moved aside at size cap', where: 'src/plugin-log.ts#APPEND_SCRIPT', session: triggerSession, detail: { file, bytes: 20_971_521 } };
-      const originalBytes = Buffer.byteLength(JSON.stringify(original) + '\n');
-      expect(originalBytes).toBeGreaterThan(4096);
-      const warning = JSON.parse(lines[i]!);
-      expect.soft(Buffer.byteLength(lines[i]! + '\n')).toBeLessThanOrEqual(4096);
-      expect.soft(warning.detail).toEqual({ truncated: true, bytes: originalBytes });
-      expect(typeof warning.session).toBe('string');
-      expect(triggerSession.startsWith(warning.session)).toBe(true);
-      expect(warning.session.length).toBeGreaterThan(0);
-      expect(warning.session).not.toContain('�');
-      expect(warning.msg.length).toBeGreaterThan(0);
-    }
-  }
-});
 
 // The engine's kit forbids Node imports. Exercise its same hook registration
 // here with the real process backend; kit tests separately pin host dispatch.
 function adapter(initial: Record<string, string>, options: Record<string, string | boolean> = {}) {
   const env = new Map(Object.entries(initial));
   const logs: string[] = [];
+  /** The lines `$.ui.log` puts on screen: every line but one sent `to: 'debug'`. */
+  const screen: string[] = [];
   const controls = {
     uiFails: false, processFails: false, ttlFails: false, listingFails: false, clockFails: false, toastFails: false, registerFails: false, registerUnbound: false,
     now: 1_000_000_000_000,
@@ -271,7 +50,7 @@ function adapter(initial: Record<string, string>, options: Record<string, string
     session: { id: async () => 'log-session' },
     command: { register: async () => { if (controls.registerUnbound) throw new Error('cache-live-control: $.command.register is not available in this mode: no session is bound in this process (the REPL has not mounted and no headless session is built); catch it and carry on'); if (controls.registerFails) throw new Error('register refused'); return { command: 'cache' }; } },
     agent: { list: async () => { if (controls.listingFails) throw new Error('agent list refused'); return []; } },
-    ui: { log: (text: string) => { if (controls.uiFails) throw new Error('screen refused'); logs.push(text); }, toast: () => { if (controls.toastFails) throw new Error('toast refused'); } },
+    ui: { log: (text: string, init?: { to?: string }) => { if (controls.uiFails) throw new Error('screen refused'); logs.push(text); if (init?.to !== 'debug') screen.push(text); }, toast: () => { if (controls.toastFails) throw new Error('toast refused'); } },
     process: { run: async (argv: readonly string[]) => {
       if (controls.processFails) throw new Error('append refused');
       return run(argv);
@@ -289,7 +68,7 @@ function adapter(initial: Record<string, string>, options: Record<string, string
     for (;;) { const item = await stream.next(); if (item.done) return item.value; }
   }
   const removeProcess = () => { delete (engine as Partial<EngineInterface>).process; };
-  return { emit, end, command, step, controls, logs, env, removeProcess };
+  return { emit, end, command, step, controls, logs, screen, env, removeProcess };
 }
 
 test.each([
@@ -440,4 +219,32 @@ test('real adapter unavailable process and failed directory lookup remain visibl
   await unreadable.command('main 1h'); await unreadable.end();
   const notices = unreadable.logs.filter((s) => s.includes('plugin log initialization/row failed:'));
   expect.soft(notices).toHaveLength(1); expect.soft(notices[0]).toContain('read refused');
+});
+
+test('the plugin log failing-streak line reaches the screen, once per streak', async () => {
+  const home = await temp(); const a = adapter({ HOME: home });
+  a.controls.processFails = true; a.controls.ttlFails = true;
+  await a.emit('session.start', { cwd: '.' });
+  for (let i = 0; i < 2; i++) { await a.command('main 1h'); await a.end(); }
+  const streak = () => a.screen.filter((s) => s.startsWith('cache-live-control: plugin log '));
+  expect(streak()).toHaveLength(1);
+  expect(streak()[0]).toContain('append refused');
+  a.controls.processFails = false; await a.command('main 1h'); await a.end();
+  a.controls.processFails = true; await a.command('main 1h'); await a.end();
+  expect(streak()).toHaveLength(2);
+});
+
+test('a warning row never reaches the screen, nor its log line', async () => {
+  const home = await temp(); const a = adapter({ HOME: home });
+  await a.emit('session.start', { cwd: '.' });
+  await a.command('guard warn');
+  a.controls.listingFails = true;
+  await a.emit('tool.call', { tool: 'SendMessage', to: 'unknown', message: 'sent' });
+  a.controls.ttlFails = true;
+  await a.command('main 1h');
+  await a.end();
+  const warnings = (await contents(join(home, '.local/state/cache-live-control/logs/warnings.jsonl'))).split('\n').filter(Boolean).map((s) => JSON.parse(s));
+  expect(warnings.map((r) => r.event)).toContain('resume-check-failed');
+  expect(a.screen.filter((s) => s.includes('checking the resume'))).toEqual([]);
+  expect(a.screen.filter((s) => s.includes('plugin log '))).toEqual([]);
 });

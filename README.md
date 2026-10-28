@@ -582,6 +582,11 @@ Errors, warnings and actionable decisions are appended to
 When `PLUGIN_LOG_DIR` is unset, they go to
 `$HOME/.local/state/cache-live-control/logs/`. Each JSONL row names its event,
 component and session when known. Files past 20 MiB move aside to `.1` on
-write, with a `log-capped` warning. A failed write reports once through the
-existing debug log per failing streak and never changes the cache operation.
-Existing notices and `/cache` replies are unchanged.
+write (five generations kept, `.1` newest), with a `log-capped` warning. The log is written by the shared
+plugin-log library, vendored as `src/plugin-log.ts`.
+
+The screen shows only an error's line, and one line per failing streak of the
+log itself (`cache-live-control: plugin log {dir} failed: …`, or `plugin log
+off` with no directory), said again only after a write succeeds; a warning or
+info row never reaches the screen. A failing log never changes the cache
+operation, and `/cache` replies are unchanged.

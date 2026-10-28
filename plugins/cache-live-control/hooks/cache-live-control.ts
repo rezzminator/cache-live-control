@@ -12,7 +12,7 @@ import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, o
 import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
 import { isMarked, summariesStatus, withMark } from '../src/summaries.ts';
 import { type Change, type Party, type Ttl } from '../src/ttl.ts';
-import { levelRow, pluginLogDir, PluginLogQueue, type PluginLogLevel } from '../src/plugin-log.ts';
+import { levelRow, onScreen, pluginLogDir, PluginLogQueue, type FlushResult, type PluginLogLevel } from '../src/plugin-log.ts';
 import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
 
 // Thin adapter: every decision lives in src/. Claude Code reads the TTL
@@ -80,14 +80,28 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The existing debug door; logger failure never changes a cache decision. */
+/** A detail of the log's own metadata, to Claude Code's debug log: never the screen. */
 function pluginLogNotice($: EngineInterface, text: string): void {
   try { $.ui.log(`cache-live-control: ${text}`, { to: 'debug' }); }
   catch { /* The sole fallback door itself is unavailable; do not fail hook work. */ }
 }
 
-async function runPluginLog($: EngineInterface, argv: readonly string[]) {
-  return $.process.run(argv, { timeoutMs: 5000 });
+/** The one line of a failing log streak, on screen; logger failure never changes a cache decision. */
+function pluginLogScreen($: EngineInterface, line: string): void {
+  try { $.ui.log(line); }
+  catch { /* The screen itself is unavailable; do not fail hook work. */ }
+}
+
+// Past the library's 10 s lock wait, so a held lock is waited on, not killed.
+async function runPluginLog($: EngineInterface, argv: string[]) {
+  return $.process.run(argv, { timeoutMs: 15_000 });
+}
+
+/** Writes the queue through `$`; the library's streak line, said once per failing streak, goes on screen. */
+async function flushQueue($: EngineInterface, queue: PluginLogQueue): Promise<FlushResult> {
+  const result = await queue.flush((argv) => runPluginLog($, argv));
+  if (result.screen !== undefined) pluginLogScreen($, result.screen);
+  return result;
 }
 
 async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLevel, event: string, msg: string, where: string, detail?: Record<string, unknown>): Promise<void> {
@@ -98,7 +112,7 @@ async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLev
     try { session = await $.session.id(); }
     catch (error) { pluginLogNotice($, `plugin log session id unreadable: ${message(error)}`); }
     st.pluginLog = {
-      queue: new PluginLogQueue(pluginLogDir(root, home, 'cache-live-control'), 'cache-live-control', (text) => pluginLogNotice($, text)),
+      queue: new PluginLogQueue(pluginLogDir(root, home, 'cache-live-control'), 'cache-live-control'),
       ...(session === undefined ? {} : { session }),
     };
   }
@@ -106,27 +120,28 @@ async function queuePluginLog(st: State, $: EngineInterface, level: PluginLogLev
   try { now = await $.clock.now(); }
   catch (error) { now = Date.now(); pluginLogNotice($, `plugin log clock unreadable, using wall clock: ${message(error)}`); }
   const log = st.pluginLog;
-  log.queue.add({ level, row: levelRow({ plugin: 'cache-live-control', level, event, msg, where: `hooks/cache-live-control.ts#${where}`, ...(log.session === undefined ? {} : { session: log.session }), ...(detail === undefined ? {} : { detail }) }, now) });
+  log.queue.add(levelRow({ plugin: 'cache-live-control', level, event, msg, where: `hooks/cache-live-control.ts#${where}`, ...(log.session === undefined ? {} : { session: log.session }), ...(detail === undefined ? {} : { detail }) }, now));
   st.logFailed = false;
-  void log.queue.flush((argv) => runPluginLog($, argv));
+  void flushQueue($, log.queue);
 }
 
 /** Metadata and writes happen off the hook's path, in order. */
 function plog(st: State, $: EngineInterface, level: PluginLogLevel, event: string, msg: string, where: string, detail?: Record<string, unknown>): void {
   st.logWork = st.logWork.then(() => queuePluginLog(st, $, level, event, msg, where, detail)).catch((error: unknown) => {
-    if (!st.logFailed) pluginLogNotice($, `plugin log initialization/row failed: ${message(error)}`);
+    if (!st.logFailed) pluginLogScreen($, `cache-live-control: plugin log initialization/row failed: ${message(error)}`);
     st.logFailed = true;
   });
 }
 
+/** A failure: its row, and its line, on screen only for an error row (`debug` keeps even that off screen). */
 function fault(st: State, $: EngineInterface, level: PluginLogLevel, event: string, where: string, error: unknown, text: string, debug = false): void {
   plog(st, $, level, event, text, where, { error: message(error) });
-  $.ui.log(text, debug ? { to: 'debug' } : undefined);
+  $.ui.log(text, debug || !onScreen(level) ? { to: 'debug' } : undefined);
 }
 
 async function flushPluginLog(st: State, $: EngineInterface): Promise<void> {
   await st.logWork;
-  await st.pluginLog?.queue.flush((argv) => runPluginLog($, argv));
+  if (st.pluginLog !== undefined) await flushQueue($, st.pluginLog.queue);
 }
 
 async function readEnv($: EngineInterface): Promise<EnvSnapshot> {

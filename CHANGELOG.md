@@ -4,6 +4,13 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+### Changed
+- The plugin log is now the shared plugin-log library, vendored as `src/plugin-log.ts`; its rows, files and directory are unchanged. A level file past 20 MiB now keeps five generations (`.1` newest to `.5`) instead of one, appends take a lock so two sessions never rotate the same file twice, and rows a failed write could not append are kept for the next flush instead of dropped.
+
+### Fixed
+- The line saying the plugin log is failing or off now shows on screen, once per failing streak, re-armed by the next successful write; it went only to Claude Code's debug log, so a dead log went unseen.
+- A warning no longer reaches the screen: `checking the resume of {agent} failed, the message is sent` showed in the transcript; it now goes to its `warnings.jsonl` row (and the debug log) only, as every warning does.
+
 ## [0.6.5] — 2026-10-27
 
 ### Fixed
