@@ -1,237 +1,283 @@
-export const PLUGIN_LOG_CAP_BYTES = 20_971_520;
+// The shared plugin-log library: level files under one directory per plugin, rows bounded and keyed in one order,
+// rotation past a cap, and a loss-free write queue.
+// This file is a vendored copy of the plugin-log canonical source, kept byte-identical in every plugin by a sync
+// check: change the canonical source, then re-vendor every copy.
+// It runs in the function-hook sandbox: no Node API, every write is a /bin/sh process the caller runs.
+
+export type PluginLogLevel = 'error' | 'warning' | 'info' | 'debug';
+export type PluginLogFields = { plugin: string; level: PluginLogLevel; event: string; msg: string; where: string; session?: string; detail?: Record<string, unknown>; /** The row's own time, when it is not the writing time. */ ts?: string };
+
+/** A level file past this size moves aside to `.1`, older generations shifting up. */
+export const PLUGIN_LOG_CAP_BYTES = 20971520;
+/** Rotated generations each level file keeps (`.1` newest … `.5`). */
+export const PLUGIN_LOG_KEEP = 5;
+/** One row's bound in UTF-8 bytes, its newline included. */
 export const ROW_MAX_BYTES = 4096;
-export type PluginLogLevel = 'error' | 'warning' | 'info';
-export type PluginLogFields = {
-  plugin: string;
-  level: PluginLogLevel;
-  event: string;
-  msg: string;
-  where: string;
-  session?: string;
-  detail?: Record<string, unknown>;
-};
-export type PluginLogRow = { level: PluginLogLevel; row: string };
-export type PluginLogRun = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-export type FlushResult = { written: number; dropped: number };
+/** At most this many unwritten rows are held for the next flush; past it the oldest go, counted. */
+export const PLUGIN_LOG_HOLD_ROWS = 2_000;
+/** A live lock holder is waited on this long: under a 15 s hook bound, past the seconds contention reaches under load. */
+export const LOCK_WAIT_SECONDS = 10;
 
-/** UTF-8 bytes without a host import: the hook loader accepts only local modules. */
-function bytes(text: string): number {
-  let count = 0;
-  for (const char of text) {
-    const code = char.codePointAt(0)!;
-    count += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
-  }
-  return count;
+const LEVEL_FILES: Record<PluginLogLevel, string> = { error: 'errors.jsonl', warning: 'warnings.jsonl', info: 'info.jsonl', debug: 'debug.jsonl' };
+
+/** `$PLUGIN_LOG_DIR/{plugin}` when the override is set, else `{home}/.local/state/{plugin}/logs`; undefined is logging off. */
+export function pluginLogDir(override: string | undefined, home: string | undefined, plugin: string): string | undefined {
+  if (override) return `${override.replace(/\/+$/, '')}/${plugin}`;
+  return home ? `${home.replace(/\/+$/, '')}/.local/state/${plugin}/logs` : undefined;
 }
 
+/** The screen shows error rows only; warning, info and debug rows go to their files. */
+export function onScreen(level: PluginLogLevel): boolean {
+  return level === 'error';
+}
+
+/** UTF-8 byte count without TextEncoder. */
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (const char of text) { const point = char.codePointAt(0)!; bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4; }
+  return bytes;
+}
+
+/** Longest code-point prefix of `text` for which `fits` holds (fits('') must hold). */
+function fitPrefix(text: string, fits: (prefix: string) => boolean): string {
+  const chars = Array.from(text);
+  let low = 0; let high = chars.length;
+  while (low < high) {
+    const at = Math.ceil((low + high) / 2);
+    if (fits(chars.slice(0, at).join(''))) low = at; else high = at - 1;
+  }
+  return chars.slice(0, low).join('');
+}
+
+/**
+ * One JSONL row, keys in order ts, plugin, level, event, msg, where, session, detail; at most ROW_MAX_BYTES with its
+ * newline. An oversized row's detail becomes {truncated, bytes} (bytes: the whole row's), then msg, session, where,
+ * event and plugin shorten in that order; it never throws on size.
+ */
 export function levelRow(fields: PluginLogFields, nowMs: number): string {
-  const row: PluginLogFields & { ts: string } = {
-    ts: new Date(nowMs).toISOString(),
-    plugin: fields.plugin,
-    level: fields.level,
-    event: fields.event,
-    msg: fields.msg,
-    where: fields.where,
-    ...(fields.session === undefined ? {} : { session: fields.session }),
-    ...(fields.detail === undefined ? {} : { detail: fields.detail }),
-  };
-  const encode = () => JSON.stringify(row) + '\n';
-  let text = encode();
-  const originalBytes = bytes(text);
-  if (originalBytes <= ROW_MAX_BYTES) return text;
-  row.detail = { truncated: true, bytes: originalBytes };
-  // A fixed plugin's identifiers are tiny. Bound them too if a malformed caller
-  // supplies huge ones, keeping JSON and the row limit intact.
-  for (const key of ['msg', 'where', 'event', 'session', 'plugin'] as const) {
-    text = encode();
-    if (bytes(text) <= ROW_MAX_BYTES) return text;
-    const value = row[key];
-    if (value === undefined) continue;
-    const chars = Array.from(value);
-    let low = Math.min(1, chars.length);
-    let high = chars.length;
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      row[key] = chars.slice(0, mid).join('');
-      if (bytes(encode()) <= ROW_MAX_BYTES) low = mid;
-      else high = mid - 1;
-    }
-    row[key] = chars.slice(0, low).join('');
+  if (!(fields.level in LEVEL_FILES)) throw new Error(`plugin log invalid level: ${String(fields.level)}`);
+  const own = fields.ts === undefined ? Number.NaN : Date.parse(fields.ts);
+  const row: Record<string, unknown> = { ts: new Date(Number.isFinite(own) ? own : nowMs).toISOString(), plugin: fields.plugin, level: fields.level, event: fields.event, msg: fields.msg, where: fields.where, ...(fields.session ? { session: fields.session } : {}), ...(fields.detail !== undefined ? { detail: fields.detail } : {}) };
+  const serialize = () => `${JSON.stringify(row)}\n`;
+  const bytes = utf8Bytes(serialize());
+  if (bytes <= ROW_MAX_BYTES) return serialize();
+  row.detail = { truncated: true, bytes };
+  for (const key of ['msg', 'session', 'where', 'event', 'plugin']) {
+    if (typeof row[key] !== 'string') continue;
+    row[key] = fitPrefix(row[key] as string, (prefix) => { row[key] = prefix; return utf8Bytes(serialize()) <= ROW_MAX_BYTES; });
+    if (key === 'session' && row.session === '') delete row.session;
+    if (utf8Bytes(serialize()) <= ROW_MAX_BYTES) return serialize();
   }
-  return encode();
+  return serialize();
 }
 
-export function pluginLogDir(root: string | undefined, home: string | undefined, plugin: string): string | undefined {
-  if (root) return `${root.replace(/\/+$/, '')}/${plugin}`;
-  if (home) return `${home.replace(/\/+$/, '')}/.local/state/${plugin}/logs`;
-  return undefined;
+/**
+ * A directory lock born with its holder's token (`pid epoch`) in `$lock/pid`: staged under a private name and
+ * renamed into place, so the lock never exists without its token. A lock whose holder is gone, or whose token is
+ * older than a minute (no append takes that long), is broken; a live one is waited on for `LOCK_WAIT_SECONDS`. A stage
+ * or a broken lock (`$lock.{pid}`, `$lock.dead.{pid}`) whose writer is dead is cleared: a writer killed between its
+ * mkdir and its rename leaves one behind.
+ * Breaking and releasing first claim the token by renaming `$lock/pid` to a private name: only one mover wins that
+ * rename, and the claimer removes the lock only when the token it took is the one it saw stale (or its own), so no
+ * waiter removes a lock another has since broken and taken, and a holder outlived by an age break never removes its
+ * successor's lock. A claimer's rename can hide the token from its new holder's check for a moment: the holder that
+ * then reads its own token back owns the lock. A claimer that dies holding the token, or holds it past a minute,
+ * has its claim put back by a waiter, so the lock is broken by the same rules; the claim's name carries its own
+ * start time (`pid.claim.{epoch}.{pid}`), since the renamed token keeps the token's age, not the claim's.
+ * The script that embeds it defines `fail FILE CAUSE`.
+ */
+export const LOCK_FN = `lk_claim() {
+  lk_c="$lk_lock/pid.claim.$(date +%s).$$"
+  mv "$lk_lock/pid" "$lk_c" 2>/dev/null || return 1
+  if [ "$(cat "$lk_c" 2>/dev/null)" = "$1" ]; then
+    lk_gone="$lk_lock.dead.$$"
+    rm -rf "$lk_gone"
+    mv "$lk_lock" "$lk_gone" 2>/dev/null || return 1
+    rm -rf "$lk_gone" 2>/dev/null || :
+    return 0
+  fi
+  mv "$lk_c" "$lk_lock/pid" 2>/dev/null || :
+  return 1
 }
-
-// Positional arguments only: neither a path nor JSON is shell source. Each
-// printf appends one bounded row, opening and closing the file for that write.
-export const APPEND_SCRIPT = `set -eu
-LC_ALL=C
-export LC_ALL
-umask 077
-dir=$1
-case "$dir" in -*) dir=./$dir;; esac
-plugin=$2
-shift 2
-case "$plugin" in ''|*[!a-z0-9-]*) echo "plugin log $dir: invalid plugin name" >&2; exit 2;; esac
-mkdir -p -- "$dir" || { echo "plugin log $dir: cannot create directory" >&2; exit 1; }
-cap_row() {
-  printf '{"ts":"%s","plugin":"%s","level":"warning","event":"log-capped","msg":"%s","where":"src/plugin-log.ts#APPEND_SCRIPT"%s,"detail":%s}' "$ts" "$plugin" "$cap_msg" "$session_field" "$cap_detail"
-}
-# The input is the canonical JSON string from levelRow, not shell source.
-# Retain complete JSON escape sequences and UTF-8 code points when bounding it.
-clip_session() {
-  remaining=$session_value
-  remaining=\${remaining#?}
-  remaining=\${remaining%?}
-  continuation=$(printf '\\200-\\277')
-  backslash=$(printf '\\134')
-  while [ "\${#remaining}" -gt "$budget" ]; do
-    case "$remaining" in
-      *[$continuation])
-        while :; do
-          case "$remaining" in *[$continuation]) remaining=\${remaining%?};; *) break;; esac
-        done
-        remaining=\${remaining%?};;
-      *)
-        count=1
-        case "$remaining" in
-          *"$backslash"u????) count=6;;
-          *"$backslash"?) count=2;;
-        esac
-        if [ "$count" -gt 1 ]; then
-          if [ "$count" -eq 6 ]; then prefix=\${remaining%??????}; else prefix=\${remaining%??}; fi
-          escapes=0
-          while :; do
-            case "$prefix" in *"$backslash") escapes=$((escapes + 1)); prefix=\${prefix%?};; *) break;; esac
-          done
-          if [ "$((escapes % 2))" -ne 0 ]; then count=1; fi
-        fi
-        if [ "$count" -eq 6 ]; then remaining=\${remaining%??????};
-        elif [ "$count" -eq 2 ]; then remaining=\${remaining%??};
-        else remaining=\${remaining%?}; fi;;
-    esac
+lock() {
+  lk_lock=$1
+  lk_token="$$ $(date +%s)"
+  lk_until=$((\${lk_token#* } + ${LOCK_WAIT_SECONDS}))
+  lk_stage="$lk_lock.$$"
+  for lk_s in "$lk_lock".[0-9]* "$lk_lock".dead.[0-9]*; do
+    lk_p=\${lk_s##*.}
+    case $lk_p in ''|*[!0-9]*) continue ;; esac
+    if [ -d "$lk_s" ] && [ "$lk_p" != "$$" ] && ! kill -0 "$lk_p" 2>/dev/null; then rm -rf "$lk_s" 2>/dev/null || :; fi
   done
-  session_field=',"session":"'$remaining'"'
-}
-cap_warning() {
-  session_field=
-  if [ -n "$session_value" ]; then session_field=$session_key$session_value; fi
-  cap_msg='level file moved aside at size cap'
-  cap_detail=$(printf '{"file":"%s","bytes":%s}' "$1" "$2")
-  warning=$(cap_row)
-  original_bytes=$(printf '%s\\n' "$warning" | wc -c)
-  if [ "$original_bytes" -gt 4096 ]; then
-    cap_detail=$(printf '{"truncated":true,"bytes":%s}' "$((original_bytes))")
-    warning=$(cap_row)
-    while [ "$(printf '%s\\n' "$warning" | wc -c)" -gt 4096 ] && [ "\${#cap_msg}" -gt 1 ]; do
-      cap_msg=\${cap_msg%?}
-      warning=$(cap_row)
-    done
-    if [ "$(printf '%s\\n' "$warning" | wc -c)" -gt 4096 ]; then
-      session_field=',"session":""'
-      warning=$(cap_row)
-      budget=$((4096 - $(printf '%s\\n' "$warning" | wc -c)))
-      clip_session
-      warning=$(cap_row)
+  while :; do
+    rm -rf "$lk_stage"
+    mkdir "$lk_stage" || fail "$lk_stage" 'cannot create the lock directory'
+    printf '%s\\n' "$lk_token" > "$lk_stage/pid"
+    if [ ! -e "$lk_lock" ] && mv "$lk_stage" "$lk_lock" 2>/dev/null && [ "$(cat "$lk_lock/pid" 2>/dev/null)" = "$lk_token" ]; then break; fi
+    # mv onto a lock that appeared meanwhile moves the stage into it.
+    rm -rf "$lk_stage" "$lk_lock/\${lk_stage##*/}"
+    [ "$(date +%s)" -le "$lk_until" ] || fail "$lk_lock" 'lock held by another writer'
+    holder=$(cat "$lk_lock/pid" 2>/dev/null) || holder=
+    # Our own token: our stage became the lock, and the check above read it while a claimer had it renamed aside.
+    if [ "$holder" = "$lk_token" ]; then break; fi
+    if [ -n "$holder" ] && { ! kill -0 "\${holder%% *}" 2>/dev/null || [ -n "$(find "$lk_lock/pid" -mmin +1 2>/dev/null)" ]; }; then
+      lk_claim "$holder" || :
+      continue
+    fi
+    # A claimer that died holding the token leaves the lock without one: put its claim back, so the rule above breaks it.
+    if [ -z "$holder" ]; then
+      for lk_o in "$lk_lock"/pid.claim.*; do
+        lk_t=\${lk_o##*/pid.claim.}; lk_t=\${lk_t%%.*}
+        if [ -e "$lk_o" ] && { ! kill -0 "\${lk_o##*.}" 2>/dev/null || case $lk_t in ''|*[!0-9]*) true ;; *) [ $(($(date +%s) - lk_t)) -gt 60 ] ;; esac; }; then
+          mv "$lk_o" "$lk_lock/pid" 2>/dev/null || :
+          break
+        fi
+      done
+    fi
+    sleep 0.05
+  done
+  trap 'lk_claim "$lk_token" || :' EXIT
+  trap 'exit 1' HUP INT TERM
+}`;
+
+/** Appends `file row` pairs under the directory's lock; cap, rotation and append happen under it, so two writers never both move a full file aside. */
+export const APPEND_SCRIPT = `set -eu
+umask 077
+dir=$1; plugin=$2; shift 2
+fail() { printf '%s: %s\\n' "$1" "$2" >&2; exit 1; }
+# No operand starts with '-': a relative directory is passed as ./dir, so no command reads it as an option.
+case $dir in /*) ;; *) dir=./$dir;; esac
+mkdir -p "$dir" || fail "$dir" 'cannot create the log directory'
+${LOCK_FN}
+lock "$dir/.lock"
+cap() {
+  if [ -f "$1" ]; then
+    bytes=$(wc -c < "$1") || exit 1
+    bytes=$((bytes))
+    if [ "$bytes" -gt ${PLUGIN_LOG_CAP_BYTES} ]; then
+      n=${PLUGIN_LOG_KEEP}; while [ "$n" -gt 1 ]; do n=$((n - 1)); if [ -e "$1.$n" ]; then mv -f "$1.$n" "$1.$((n + 1))" || exit 1; fi; done
+      mv -f "$1" "$1.1" || exit 1; return 0
     fi
   fi
-  printf '%s\\n' "$warning" >> "$dir/warnings.jsonl"
+  return 1
+}
+capped() {
+  msg='level file exceeded ${PLUGIN_LOG_CAP_BYTES} bytes; moved aside'
+  detail=$(printf '{"file":"%s"}' "$1")
+  truncated=false
+  while :; do
+    notice=$(printf '{"ts":"%s","plugin":"%s","level":"warning","event":"log-capped","msg":"%s","where":"src/plugin-log.ts#APPEND_SCRIPT"%s,"detail":%s}' "$ts" "$plugin" "$msg" "$session" "$detail")
+    # BSD wc pads its count with spaces, which would land in the row: arithmetic expansion drops them.
+    bytes=$(printf '%s\\n' "$notice" | wc -c) || exit 1
+    bytes=$((bytes))
+    [ "$bytes" -gt ${ROW_MAX_BYTES} ] || break
+    if [ "$truncated" = false ]; then
+      detail=$(printf '{"truncated":true,"bytes":%s}' "$bytes"); truncated=true
+    else
+      [ -n "$msg" ] || fail "$dir/warnings.jsonl" 'cap warning metadata exceeds ${ROW_MAX_BYTES} bytes'
+      msg=\${msg%?}
+    fi
+  done
+  printf '%s\\n' "$notice" >> "$dir/warnings.jsonl"
 }
 while [ "$#" -gt 0 ]; do
-  file=$1
-  row=$2
-  shift 2
-  case "$file" in errors.jsonl|warnings.jsonl|info.jsonl) ;; *) echo "plugin log $dir: invalid level file" >&2; exit 2;; esac
-  target=$dir/$file
-  if [ -f "$target" ]; then
-    size=$(wc -c < "$target")
-    if [ "$size" -gt ${PLUGIN_LOG_CAP_BYTES} ]; then
-      mv -f -- "$target" "$target.1"
-      ts=\${row#*\\"ts\\":\\"}
-      ts=\${ts%%\\"*}
-      # session is last in the canonical header; detail may contain fake keys.
-      detail_key=',"detail":'
-      session_key=',"session":'
-      end='}'
-      header=\${row%?}
-      header=\${header%"$end"}
-      header=\${header%%"$detail_key"*}
-      session_value=
-      session_field=
-      case "$header" in *"$session_key"*) session_value=\${header#*"$session_key"}; session_field=$session_key$session_value;; esac
-      if [ -f "$dir/warnings.jsonl" ]; then
-        warning_size=$(wc -c < "$dir/warnings.jsonl")
-        if [ "$warning_size" -gt ${PLUGIN_LOG_CAP_BYTES} ]; then
-          mv -f -- "$dir/warnings.jsonl" "$dir/warnings.jsonl.1"
-          cap_warning warnings.jsonl "$warning_size"
-        fi
-      fi
-      cap_warning "$file" "$size"
-    fi
+  file=$1; row=$2; shift 2
+  case "$file" in errors.jsonl|warnings.jsonl|info.jsonl|debug.jsonl) ;; *) printf '%s: invalid level file: %s\\n' "$dir" "$file" >&2; exit 2;; esac
+  ts=\${row#*\\"ts\\":\\"}; ts=\${ts%%\\"*}
+  header=\${row%?}; header=\${header%?}; header=\${header%%,\\"detail\\":*}
+  case "$header" in *',"session":'*) session=',"session":'\${header##*,\\"session\\":};; *) session=;; esac
+  path=$dir/$file
+  if cap "$path"; then
+    if [ "$file" != warnings.jsonl ] && cap "$dir/warnings.jsonl"; then capped warnings.jsonl; fi
+    capped "$file"
   fi
-  printf '%s' "$row" >> "$target"
-done
-`;
+  printf '%s' "$row" >> "$path"
+done`;
 
-export function appendArgv(dir: string, plugin: string, rows: readonly PluginLogRow[]): string[][] {
-  const files = { error: 'errors.jsonl', warning: 'warnings.jsonl', info: 'info.jsonl' };
+/** The append processes for `rows`: at most 64 file/row pairs each. */
+export function appendArgv(dir: string, plugin: string, rows: readonly string[]): string[][] {
   const batches: string[][] = [];
-  for (let start = 0; start < rows.length; start += 64) {
-    const argv = ['/bin/sh', '-c', APPEND_SCRIPT, 'plugin-log', dir, plugin];
-    for (const row of rows.slice(start, start + 64)) argv.push(files[row.level], row.row);
-    batches.push(argv);
+  for (let at = 0; at < rows.length; at += 64) {
+    const pairs = rows.slice(at, at + 64).flatMap((row) => {
+      const level: unknown = JSON.parse(row).level;
+      const file = typeof level === 'string' ? LEVEL_FILES[level as PluginLogLevel] : undefined;
+      if (file === undefined) throw new Error(`plugin log invalid level: ${String(level)}`);
+      return [file, row];
+    });
+    batches.push(['/bin/sh', '-c', APPEND_SCRIPT, 'plugin-log', dir, plugin, ...pairs]);
   }
   return batches;
 }
 
-/** One queue per hook registration; a bad batch never escapes into hook work. */
+/** A failed batch goes back to the front of `pending`, order kept; past the hold the oldest go. Returns how many went. */
+export function requeueRows(pending: string[], rows: readonly string[], hold: number = PLUGIN_LOG_HOLD_ROWS): number {
+  pending.unshift(...rows);
+  const dropped = Math.max(0, pending.length - hold);
+  if (dropped > 0) pending.splice(0, dropped);
+  return dropped;
+}
+
+export type PluginLogRun = (argv: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+/**
+ * `held`: rows queued after this flush; `lost`: rows the hold let go, reported by the flush that wrote their
+ * `plugin-log-rows-dropped` row. `error` and `screen` come once per failing streak: the cause, and the one line the
+ * caller shows on screen.
+ */
+export type FlushResult = { held: number; lost: number; error?: string; screen?: string };
+
+/**
+ * Serialized append batches. A batch that fails (or is killed after writing part of it) goes back to the front of the
+ * queue whole, so a row may be written twice, never lost; past the hold the oldest rows go, and the next write that
+ * succeeds carries a `plugin-log-rows-dropped` error row counting them. A success re-arms the streak line. With no
+ * directory, logging is off: rows go nowhere, said once.
+ */
 export class PluginLogQueue {
-  private rows: PluginLogRow[] = [];
-  private chain: Promise<FlushResult> = Promise.resolve({ written: 0, dropped: 0 });
+  private rows: string[] = [];
+  private writing: Promise<unknown> = Promise.resolve();
   private failing = false;
-
-  constructor(private dir: string | undefined, private plugin: string, private notice: (text: string) => void) {}
-
-  add(row: PluginLogRow): void { this.rows.push(row); }
-
-  private failed(error: string, dropped: number): void {
-    if (this.failing) return;
-    this.failing = true;
-    this.notice(this.dir === undefined ? 'plugin log off: no PLUGIN_LOG_DIR and no HOME' : `plugin log ${this.dir}: ${error}; dropped ${dropped} row(s)`);
-  }
-
+  private lost = 0;
+  private readonly dir: string | undefined;
+  private readonly plugin: string;
+  constructor(dir: string | undefined, plugin: string) { this.dir = dir; this.plugin = plugin; }
+  add(row: string): void { this.rows.push(row); }
+  get held(): number { return this.rows.length; }
   flush(run: PluginLogRun): Promise<FlushResult> {
-    const work = async (): Promise<FlushResult> => {
-      const result = { written: 0, dropped: 0 };
-      while (this.rows.length > 0) {
-        const batch = this.rows.splice(0, 64);
-        if (this.dir === undefined) {
-          result.dropped += batch.length;
-          this.failed('no directory', batch.length);
-          continue;
-        }
-        try {
-          const output = await run(appendArgv(this.dir, this.plugin, batch)[0]!);
-          if (output.exitCode !== 0) {
-            result.dropped += batch.length;
-            this.failed(output.stderr.split('\n')[0] || `exit ${output.exitCode}`, batch.length);
-          } else {
-            result.written += batch.length;
-            this.failing = false;
-          }
-        } catch (error) {
-          result.dropped += batch.length;
-          this.failed(error instanceof Error ? error.message : String(error), batch.length);
-        }
+    const pending = this.writing.then(async (): Promise<FlushResult> => {
+      const dir = this.dir;
+      if (dir === undefined) {
+        const any = this.rows.splice(0).length > 0;
+        const report = any && !this.failing;
+        if (any) this.failing = true;
+        return { held: 0, lost: 0, ...(report ? { error: 'no PLUGIN_LOG_DIR and no HOME', screen: `${this.plugin}: plugin log off: no PLUGIN_LOG_DIR and no HOME` } : {}) };
       }
-      return result;
-    };
-    this.chain = this.chain.then(work);
-    return this.chain;
+      const rows = this.rows.splice(0);
+      if (rows.length === 0) return { held: 0, lost: 0 };
+      const lost = this.lost;
+      if (lost > 0) {
+        this.lost = 0;
+        rows.unshift(levelRow({ plugin: this.plugin, level: 'error', event: 'plugin-log-rows-dropped', msg: `${lost} unwritten ${lost === 1 ? 'row was' : 'rows were'} dropped past the ${PLUGIN_LOG_HOLD_ROWS}-row hold`, where: 'src/plugin-log.ts#PluginLogQueue', detail: { rows: lost } }, Date.parse(JSON.parse(rows[0]!).ts)));
+      }
+      let written = 0;
+      try {
+        for (const argv of appendArgv(dir, this.plugin, rows)) {
+          const out = await run(argv);
+          if (out.exitCode !== 0) throw new Error(out.stderr.split('\n')[0]?.trim() || `exit ${out.exitCode}`);
+          written += (argv.length - 6) / 2;
+          this.failing = false;
+        }
+        return { held: this.rows.length, lost };
+      } catch (error) {
+        const report = !this.failing;
+        this.failing = true;
+        // Unwritten, the count goes back to the counter, never into the queue as a row the hold could drop.
+        if (written === 0 && lost > 0) { rows.shift(); this.lost += lost; }
+        this.lost += requeueRows(this.rows, rows.slice(written), PLUGIN_LOG_HOLD_ROWS);
+        const cause = error instanceof Error ? error.message : String(error);
+        const held = this.rows.length;
+        return { held, lost: written > 0 ? lost : 0, ...(report ? { error: cause, screen: `${this.plugin}: plugin log ${dir} failed: ${cause}; ${held} ${held === 1 ? 'row is' : 'rows are'} kept for the next write` } : {}) };
+      }
+    });
+    this.writing = pending;
+    return pending;
   }
 }
