@@ -10,7 +10,7 @@ in its own process. `README.md` is the behavioural spec.
 - `plugins/cache-live-control/hooks/cache-live-control.ts`: the adapter, the only file that touches `$`.
 - `plugins/cache-live-control/src/`: every decision, pure and unit-tested; root `tests/` holds one vitest file per concern, `plugins/cache-live-control/tests/` the function-hook tests on the `claude-code/testing` kit.
 - `types/claude-code.d.ts`: the plugin API (from `/plugin-types`), the truth for every hook's shape; grep it before using an event.
-- `plugins/cache-live-control/.claude-plugin/`: `plugin.json` (manifest, `userConfig`) and `icon.svg`; the root `.claude-plugin/marketplace.json` makes the repo its own marketplace.
+- `plugins/cache-live-control/.claude-plugin/`: `plugin.json` (manifest, `userConfig`) and `icon.svg`; the plugin installs as `cache-live-control@professor`.
 
 ## Commands
 
@@ -25,14 +25,14 @@ in its own process. `README.md` is the behavioural spec.
 - A bad variable is named by `/cache` and the option's default applies, never the configured option.
 - A new option adds its variable to `ENV` (`plugins/cache-live-control/src/options.ts`) and the adapter's `readOptionEnv`, its README row and its row in `tests/options.test.ts`.
 - The precedence table in the README states Claude Code's behaviour as measured; a claim not re-measured on a new Claude Code release is labelled so.
-- A version bump moves `plugins/cache-live-control/.claude-plugin/plugin.json`, `marketplace.json`, `package.json` and the README badge together; installed copies update only on a new version.
+- A version bump moves `plugins/cache-live-control/.claude-plugin/plugin.json`, `package.json` and the README badge together; installed copies update only on a new version.
 - Public repo: no machine-absolute paths, personal data or private project names in a tracked file.
 - `$` is passed only to functions declared at the top level of the hooks file and always spelled `$.noun.event(...)`, and `$.env` names are string literals: Claude Code checks this statically and otherwise loads the module with zero hooks. `npm run validate:plugin` catches it.
 
 ## Branches and releases
 
 - `develop` is the default branch: every change lands there, by a commit or a pull request, and no CI runs on a push. `.github/workflows/release.yml` runs on the `develop → main` pull request only. `develop` is protected by the ruleset `develop keeps its history`: never force-push or delete it.
-- `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after `check` and `release` pass: never a direct push, never an admin override. The marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
+- `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after `check` and `release` pass: never a direct push, never an admin override. Professor's marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
 - A release, in order:
   1. On `develop`: bump the version in all four places, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. Every merge into `main` publishes, so a pre-release suffix (`-dev.N`, `-alpha`) becomes the real release version here.
   2. `make release-check` passes, after `git fetch origin main`.

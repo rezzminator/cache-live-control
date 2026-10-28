@@ -64,8 +64,8 @@ environment variables and settings read at launch.
 export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
 
 # 2. Install
-claude plugin marketplace add rezzminator/cache-live-control
-claude plugin install cache-live-control@cache-live-control
+claude plugin marketplace add rezzminator/professor
+claude plugin install cache-live-control@professor
 ```
 
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of
@@ -206,7 +206,7 @@ process is the one per-chat switch.
 ## ⚙️ Configuration
 
 Set these through `/config`, or under
-`pluginConfigs["cache-live-control@cache-live-control"].options` in
+`pluginConfigs["cache-live-control@professor"].options` in
 `settings.json`. The key must be the full plugin id: Claude Code silently
 ignores options under any other key.
 
@@ -337,7 +337,7 @@ A bad value (`abc`, `0`, `1.5`) is ignored and named by `/cache`
 {
   "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
   "pluginConfigs": {
-    "cache-live-control@cache-live-control": {
+    "cache-live-control@professor": {
       "options": { "mainTtl": "5m", "subagentTtl": "5m", "raiseAfterExpiries": "2" }
     }
   }
