@@ -11,6 +11,7 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 ### Fixed
 - The line saying the plugin log is failing or off now shows on screen, once per failing streak, re-armed by the next successful write; it went only to Claude Code's debug log, so a dead log went unseen.
 - A warning no longer reaches the screen: `checking the resume of {agent} failed, the message is sent` showed in the transcript; it now goes to its `warnings.jsonl` row (and the debug log) only, as every warning does.
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
 
 ## [0.6.5] — 2026-10-27
 
