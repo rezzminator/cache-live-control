@@ -4,8 +4,10 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-30
+
 ### Changed
-- Installs as `cache-live-control@professor` from the professor marketplace; the repo's own marketplace file is gone.
+- Installs as `cache-live-control@professor` from the professor marketplace; the repo's own marketplace file is gone. To migrate from an install out of this repo's marketplace: `claude plugin marketplace add rezzminator/professor`, then `claude plugin install cache-live-control@professor`, and uninstall the old id. Options keep their names; move any saved `pluginConfigs` entry to the new id.
 - The plugin log is now the shared plugin-log library, vendored as `src/plugin-log.ts`; its rows, files and directory are unchanged. A level file past 20 MiB now keeps five generations (`.1` newest to `.5`) instead of one, appends take a lock so two sessions never rotate the same file twice, and rows a failed write could not append are kept for the next flush instead of dropped.
 
 ### Fixed
