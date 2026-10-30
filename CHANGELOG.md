@@ -4,6 +4,17 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-30
+
+### Changed
+- Installs as `cache-live-control@professor` from the professor marketplace; the repo's own marketplace file is gone. To migrate from an install out of this repo's marketplace: `claude plugin marketplace add rezzminator/professor`, then `claude plugin install cache-live-control@professor`, and uninstall the old id. Options keep their names; move any saved `pluginConfigs` entry to the new id.
+- The plugin log is now the shared plugin-log library, vendored as `src/plugin-log.ts`; its rows, files and directory are unchanged. A level file past 20 MiB now keeps five generations (`.1` newest to `.5`) instead of one, appends take a lock so two sessions never rotate the same file twice, and rows a failed write could not append are kept for the next flush instead of dropped.
+
+### Fixed
+- The line saying the plugin log is failing or off now shows on screen, once per failing streak, re-armed by the next successful write; it went only to Claude Code's debug log, so a dead log went unseen.
+- A warning no longer reaches the screen: `checking the resume of {agent} failed, the message is sent` showed in the transcript; it now goes to its `warnings.jsonl` row (and the debug log) only, as every warning does.
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
+
 ## [0.6.5] — 2026-10-27
 
 ### Fixed

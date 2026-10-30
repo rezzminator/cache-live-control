@@ -5,9 +5,9 @@
 **Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache main 1h`, `/cache 1h agents`, words in any order, for the main chat, its sub-agents or both, with a one-line warning when a switch touches a warm cache.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.6.5-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-348%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-309%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 </div>
@@ -64,8 +64,8 @@ environment variables and settings read at launch.
 export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
 
 # 2. Install
-claude plugin marketplace add rezzminator/cache-live-control
-claude plugin install cache-live-control@cache-live-control
+claude plugin marketplace add rezzminator/professor
+claude plugin install cache-live-control@professor
 ```
 
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of
@@ -206,7 +206,7 @@ process is the one per-chat switch.
 ## ⚙️ Configuration
 
 Set these through `/config`, or under
-`pluginConfigs["cache-live-control@cache-live-control"].options` in
+`pluginConfigs["cache-live-control@professor"].options` in
 `settings.json`. The key must be the full plugin id: Claude Code silently
 ignores options under any other key.
 
@@ -337,7 +337,7 @@ A bad value (`abc`, `0`, `1.5`) is ignored and named by `/cache`
 {
   "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
   "pluginConfigs": {
-    "cache-live-control@cache-live-control": {
+    "cache-live-control@professor": {
       "options": { "mainTtl": "5m", "subagentTtl": "5m", "raiseAfterExpiries": "2" }
     }
   }
@@ -464,9 +464,9 @@ the piece off.
 
 ## 🧩 Launchers
 
-A program that starts Claude Code (Professor's `pfm` does; any launcher
-may) hands the plugin its starting TTLs through variables the plugin owns,
-never through Claude Code's own, so the plugin stays the only writer of
+A program that starts Claude Code may hand the plugin its starting TTLs
+through variables the plugin owns, never through Claude Code's own, so the
+plugin stays the only writer of
 `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`.
 They are the environment variables of the options `mainTtl` and `subagentTtl`:
 
@@ -495,8 +495,7 @@ bad value is named by `/cache`
 (`CACHE_LIVE_CONTROL_MAIN_TTL "2h" ignored: use 5m, 1h or auto`) and that
 party stays automatic: the option does not stand in for it.
 
-The plugin is standalone: it depends on no launcher, and Professor depends
-on it.
+The plugin is standalone: it depends on no launcher.
 
 ## ❓ FAQ
 
@@ -582,6 +581,11 @@ Errors, warnings and actionable decisions are appended to
 When `PLUGIN_LOG_DIR` is unset, they go to
 `$HOME/.local/state/cache-live-control/logs/`. Each JSONL row names its event,
 component and session when known. Files past 20 MiB move aside to `.1` on
-write, with a `log-capped` warning. A failed write reports once through the
-existing debug log per failing streak and never changes the cache operation.
-Existing notices and `/cache` replies are unchanged.
+write (five generations kept, `.1` newest), with a `log-capped` warning. The log is written by the shared
+plugin-log library, vendored as `src/plugin-log.ts`.
+
+The screen shows only an error's line, and one line per failing streak of the
+log itself (`cache-live-control: plugin log {dir} failed: …`, or `plugin log
+off` with no directory), said again only after a write succeeds; a warning or
+info row never reaches the screen. A failing log never changes the cache
+operation, and `/cache` replies are unchanged.
