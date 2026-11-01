@@ -1,7 +1,6 @@
-// The shared plugin-log library: level files under one directory per plugin, rows bounded and keyed in one order,
+// The plugin-log library: level files under one directory per plugin, rows bounded and keyed in one order,
 // rotation past a cap, and a loss-free write queue.
-// This file is a vendored copy of the plugin-log canonical source, kept byte-identical in every plugin by a sync
-// check: change the canonical source, then re-vendor every copy.
+// This is cache-live-control's own logging module; edit it here.
 // It runs in the function-hook sandbox: no Node API, every write is a /bin/sh process the caller runs.
 
 export type PluginLogLevel = 'error' | 'warning' | 'info' | 'debug';
