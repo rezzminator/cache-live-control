@@ -73,7 +73,8 @@ claude plugin install cache-live-control@professor
 
 > **Early access.** This plugin is built on Claude Code's function hooks,
 > an early-access surface that may change between releases. It is tested on
-> Claude Code 2.1.283.
+> Claude Code 2.1.316, the version CI pins: `CLAUDE_CODE_VERSION` in
+> [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ## 🧭 Commands
 
@@ -545,7 +546,7 @@ npm run live          # live proof in tmux, spends a few cents of Haiku
 
 To try a checkout in a real session, load it with `--plugin-dir plugins/cache-live-control` (its options key is `cache-live-control@inline`), as `npm run live` does. A local directory marketplace whose plugin folder is a symlink into this checkout loads no hooks: Claude Code refuses a hooks module that resolves outside the marketplace (`Path escapes plugin directory: ./cache-live-control.ts (hooks)`, in the `--debug-file` log).
 
-Work lands on `develop`; `main` holds only releases. Merging the `develop → main` pull request is the release: [`release.yml`](./.github/workflows/release.yml) tags the merge commit `cache-live-control--vX.Y.Z` and publishes its notes from [CHANGELOG.md](./CHANGELOG.md). `make release-check` runs that pull request's checks locally first. Pull requests go to `develop`.
+Work lands on `develop`; `main` holds only releases. Merging the `develop → main` pull request is the release: [`publish.yml`](./.github/workflows/publish.yml) tags the merge commit `cache-live-control--vX.Y.Z` and publishes its notes from [CHANGELOG.md](./CHANGELOG.md). `make release-check` runs that pull request's checks locally first. Pull requests go to `develop`.
 
 `plugins/cache-live-control/hooks/cache-live-control.ts` is a thin adapter over `plugins/cache-live-control/src/`:
 
