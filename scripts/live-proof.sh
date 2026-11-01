@@ -169,10 +169,14 @@ SUB=$(dirname "$F")/$ID/subagents
 # prompt's "exactly: X"), each message id once: "T1 5m", "T2 1h", ...
 # $2 picks the label: "last" for the main chat, "first" for a sub-agent, whose
 # prompt can carry the parent's whole instruction ("S3. Then ... T8").
+# A line that does not parse costs only itself and is counted on stderr.
 buckets() {
-  jq -r -s --arg pick "${2:-last}" 'def pick: if $pick == "first" then first else last end;
+  local bad
+  bad=$(jq -R -r 'try (fromjson | empty) catch "x"' "$1" | wc -l)
+  [ "$bad" -eq 0 ] || echo "WARN $1: $((bad)) transcript lines do not parse, skipped" >&2
+  jq -n -R -r --arg pick "${2:-last}" 'def pick: if $pick == "first" then first else last end;
 
-    reduce .[] as $r ({label: "-", seen: {}, out: []};
+    reduce (inputs | fromjson?) as $r ({label: "-", seen: {}, out: []};
       if $r.type == "user" and ($r.message.content | type) == "string" and ($r.message.content | test("exactly: [A-Z][0-9]+"))
         then .label = ([$r.message.content | scan("exactly: ([A-Z][0-9]+)")] | pick | .[0])
       elif $r.type == "user" and ($r.message.content | type) == "array" and ([$r.message.content[]? | select(.type == "text") | .text | test("exactly: [A-Z][0-9]+")] | any)

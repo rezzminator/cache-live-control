@@ -1,5 +1,4 @@
-import type { Ttl } from './ttl.ts';
-import { warmForMs } from './warmth.ts';
+import { warmForMs, type StepRecord } from './warmth.ts';
 
 // One record per sub-agent: when its latest request went out, the TTL its
 // variable held, and the size of its context. They feed the resume guard
@@ -9,7 +8,7 @@ export type AgentRecord = {
   /** When the agent's latest request went out. */
   at: number;
   /** The TTL the agents' variable held then. */
-  ttl: Ttl | 'automatic';
+  ttl: StepRecord['ttl'];
   /** The prompt its latest response was answered over, plus the response: input + cache read + cache creation + output; 0 until known. */
   context: number;
   /** Spawned but not yet seen requesting: `at` is the spawn, which wrote no cache. */
@@ -32,7 +31,7 @@ export function contextOf(usage: Usage | null | undefined): number | undefined {
 }
 
 /** An agent's request is going out at `step.at` with the TTL its variable holds; the first one after a spawn ends its pending mark. */
-export function noteRequest(records: AgentRecords, id: string, step: { at: number; ttl: Ttl | 'automatic' }): AgentRecords {
+export function noteRequest(records: AgentRecords, id: string, step: StepRecord): AgentRecords {
   const before = records.get(id);
   const kept: Partial<AgentRecord> = { ...before };
   delete kept.pending;

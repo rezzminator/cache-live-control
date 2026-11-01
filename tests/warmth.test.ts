@@ -14,16 +14,19 @@ const MIN = 60_000;
 const NOW = 1_000 * MIN;
 
 describe('records', () => {
-  it('records 5m or 1h from the variable, anything else as automatic', () => {
+  it('records 5m or 1h from the variable, unset as automatic, any other value as unknown', () => {
     expect(recordedTtl('5m')).toBe('5m');
     expect(recordedTtl('1h')).toBe('1h');
-    for (const v of [undefined, '', '2h']) expect(recordedTtl(v)).toBe('automatic');
+    for (const v of [undefined, '']) expect(recordedTtl(v)).toBe('automatic');
+    for (const v of ['2h', ' ']) expect(recordedTtl(v)).toBe('unknown');
   });
 
   it('assumes 1h for an automatic main chat and 5m for automatic sub-agents', () => {
     expect(effectiveTtl('main', { at: 0, ttl: 'automatic' })).toBe('1h');
     expect(effectiveTtl('agents', { at: 0, ttl: 'automatic' })).toBe('5m');
     expect(effectiveTtl('agents', { at: 0, ttl: '1h' })).toBe('1h');
+    expect(effectiveTtl('main', { at: 0, ttl: 'unknown' })).toBe('1h');
+    expect(effectiveTtl('agents', { at: 0, ttl: 'unknown' })).toBe('5m');
   });
 
   it('is warm strictly before the request time plus the TTL', () => {
@@ -80,6 +83,12 @@ describe('warmChanges', () => {
     expect(warmChanges({ agents: '1h' }, {}, agents(4 * MIN), NOW, false)).toMatchObject([{ party: 'agents', ttl: '5m', may: false }]);
     expect(warmChanges({ agents: '1h' }, {}, agents(5 * MIN), NOW, false)).toEqual([]);
   });
+
+  it('assumes an unknown TTL as automatic, always with "may"', () => {
+    expect(warmChanges({ agents: '1h' }, { agents: '2h' }, { agents: { at: NOW - 2 * MIN, ttl: 'unknown' } }, NOW, false)).toEqual([
+      { party: 'agents', ttl: '5m', automatic: false, may: true, target: '1h', leftMs: 3 * MIN, agoMs: 2 * MIN },
+    ]);
+  });
 });
 
 describe('lines', () => {
@@ -111,5 +120,7 @@ describe('lines', () => {
     expect(warmthLabel('main', { at: NOW - 19 * MIN, ttl: 'automatic' }, NOW)).toBe('may be warm 41m');
     expect(warmthLabel('agents', { at: NOW - 6 * MIN, ttl: 'automatic' }, NOW)).toBe('cold');
     expect(warmthLabel('agents', undefined, NOW)).toBe('cold');
+    expect(warmthLabel('agents', { at: NOW - 2 * MIN, ttl: 'unknown' }, NOW)).toBe('may be warm 3m');
+    expect(warmthLabel('main', { at: NOW - 19 * MIN, ttl: 'unknown' }, NOW)).toBe('may be warm 41m');
   });
 });

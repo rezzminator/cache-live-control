@@ -103,6 +103,15 @@ describe('guardVerdict', () => {
     expect(v.text).toContain('~187k tokens × 2 (a 1h cache write) = ~374k input-token equivalents');
   });
 
+  it('says an unknown recorded TTL is assumed, not written', () => {
+    const v = guardVerdict({ ...base, record: { ...base.record!, ttl: 'unknown' } });
+    if (v.kind !== 'block') throw new Error('expected a block');
+    expect(v.text).toBe(
+      'agent researcher has been idle 20m and its prompt cache expired 15m ago (its cache TTL is unknown; 5m assumed), so resuming re-writes its whole context: ~187k tokens × 1.25 (a 5m cache write) = ~234k input-token equivalents. ' +
+        'Not sent. To resume it anyway (for example it holds uncommitted work), send the same message beginning with [resume-anyway].',
+    );
+  });
+
   it('passes silently when the guard is off, the target is unknown, warm, small or its size unknown', () => {
     expect(guardVerdict({ ...base, mode: 'off' })).toEqual({ kind: 'pass' });
     expect(guardVerdict({ ...base, record: undefined })).toEqual({ kind: 'pass' });

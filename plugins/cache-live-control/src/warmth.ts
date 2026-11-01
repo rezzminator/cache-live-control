@@ -6,26 +6,32 @@ import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
 // cache_control, so the next request may write the whole prefix again
 // (measured: usually it still reads it; see the README's warm-cache warning).
 
-/** A party's latest model request: when, and the TTL its variable held. */
-export type StepRecord = { at: number; ttl: Ttl | 'automatic' };
+/** A party's latest model request: when, and the TTL its variable held: unset is automatic, a value Claude Code does not take unknown. */
+export type StepRecord = { at: number; ttl: Ttl | 'automatic' | 'unknown' };
 
 export type Records = Partial<Record<Party, StepRecord>>;
 
 const TTL_MS: Readonly<Record<Ttl, number>> = { '5m': 5 * 60_000, '1h': 60 * 60_000 };
 
-/** The TTL a request used, from its party's variable at that moment. */
-export function recordedTtl(variable: string | undefined): Ttl | 'automatic' {
-  return isTtl(variable) ? variable : 'automatic';
+/** The TTL a request used, from its party's variable at that moment, unset or unknown as `resolveParty` reads it. */
+export function recordedTtl(variable: string | undefined): StepRecord['ttl'] {
+  if (isTtl(variable)) return variable;
+  return variable === undefined || variable === '' ? 'automatic' : 'unknown';
 }
 
 /**
  * The lifetime a record's cache has: automatic is 1h for the main chat (the
  * subscription default; the plugin cannot see the plan, so it assumes the
- * longer lifetime) and 5m for sub-agents (measured).
+ * longer lifetime) and 5m for sub-agents (measured); an unknown one is assumed the same.
  */
 export function effectiveTtl(party: Party, record: StepRecord): Ttl {
-  if (record.ttl !== 'automatic') return record.ttl;
+  if (isTtl(record.ttl)) return record.ttl;
   return party === 'main' ? '1h' : '5m';
+}
+
+/** Whether `effectiveTtl` assumed the record's lifetime: an automatic main chat, or a variable Claude Code does not take. */
+function assumed(party: Party, record: StepRecord): boolean {
+  return record.ttl === 'unknown' || (record.ttl === 'automatic' && party === 'main');
 }
 
 /** Milliseconds the party's cache stays warm, 0 when cold or never written. */
@@ -75,7 +81,7 @@ export function warmChanges(change: Change, env: EnvSnapshot, records: Records, 
       party,
       ttl,
       automatic: record.ttl === 'automatic',
-      may: (record.ttl === 'automatic' && party === 'main') || next === undefined,
+      may: assumed(party, record) || next === undefined,
       target: next ?? 'automatic',
       leftMs,
       agoMs: now - record.at,
@@ -111,5 +117,5 @@ export function warmNote(warm: readonly WarmChange[]): string {
 export function warmthLabel(party: Party, record: StepRecord | undefined, now: number): string {
   const left = warmForMs(party, record, now);
   if (record === undefined || left === 0) return 'cold';
-  return `${record.ttl === 'automatic' && party === 'main' ? 'may be ' : ''}warm ${Math.ceil(left / 60_000)}m`;
+  return `${assumed(party, record) ? 'may be ' : ''}warm ${Math.ceil(left / 60_000)}m`;
 }

@@ -145,7 +145,9 @@ The plugin notes each party's latest model request: when, and the TTL its
 variable held. A party is **warm** until that request's time plus its TTL.
 An automatic TTL counts as 1h for the main chat (the subscription default;
 the plugin cannot see your plan, so it assumes the longer lifetime and says
-"may") and as 5m for sub-agents (row 6 below, measured).
+"may") and as 5m for sub-agents (row 6 below, measured). A variable holding
+a value Claude Code does not take is assumed the same way, and says "may" for
+either party.
 
 A switch always applies at once. When it changed the TTL of a warm party,
 the reply says so in one line:
