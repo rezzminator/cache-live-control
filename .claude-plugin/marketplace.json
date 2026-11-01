@@ -1,0 +1,23 @@
+{
+  "name": "professor",
+  "description": "A /cache command that switches the prompt-cache TTL (5m, 1h or automatic) for one chat and its sub-agents, live, with no model turn.",
+  "owner": {
+    "name": "rezzminator",
+    "url": "https://github.com/rezzminator/cache-live-control"
+  },
+  "plugins": [
+    {
+      "name": "cache-live-control",
+      "source": "./plugins/cache-live-control",
+      "description": "A /cache command that switches the prompt-cache TTL (5m, 1h or automatic) for one chat and its sub-agents, live, with no model turn.",
+      "homepage": "https://github.com/rezzminator/cache-live-control",
+      "license": "MIT",
+      "keywords": [
+        "claude-code",
+        "prompt-cache",
+        "cache-ttl",
+        "function-hooks"
+      ]
+    }
+  ]
+}

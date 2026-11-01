@@ -4,6 +4,12 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-01
+
+### Changed
+- This repo carries its own marketplace again, named `professor`, so the plugin installs straight from here: `claude plugin marketplace add rezzminator/cache-live-control`, then `claude plugin install cache-live-control@professor`. The plugin id, options and saved settings are unchanged.
+- The plugin log is written by the plugin's own logging module instead of a vendored copy of a shared library; its rows, files, rotation and screen lines are unchanged.
+
 ## [0.7.0] — 2026-10-30
 
 ### Changed

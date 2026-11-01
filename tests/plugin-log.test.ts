@@ -1,6 +1,6 @@
 /// <reference path="../types/claude-code.d.ts" />
-// The adapter's wiring onto the vendored plugin-log library: which doors log at which level, and what reaches the
-// screen. The library itself (rows, rotation, the queue) is covered by its canonical conformance tests.
+// The adapter's wiring onto the plugin-log module: which doors log at which level, and what reaches the
+// screen. The module itself (rows, rotation, the queue) is the plugin's own.
 import type { EngineInterface, On } from 'claude-code';
 import { register } from '../plugins/cache-live-control/hooks/cache-live-control.ts';
 import { execFile } from 'node:child_process';
