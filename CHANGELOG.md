@@ -4,6 +4,13 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-11-01
+
+### Fixed
+- A request sent while a TTL variable held a value Claude Code does not take is recorded as unknown, as `/cache` already names it, instead of as automatic: its warmth and the warm-switch note read "may" for either party.
+- The resume guard no longer says an agent's cache "was written at 5m" when the recorded TTL is unknown: it says the TTL is unknown and 5m assumed.
+- The live proof reads each transcript line on its own: a line that does not parse is skipped and counted on stderr, where it used to empty every bucket row of that transcript.
+
 ## [0.7.1] — 2026-11-01
 
 ### Changed

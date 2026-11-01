@@ -1,4 +1,4 @@
-# Every check the release workflow runs on a develop -> main pull request, run
+# Every check ci.yml runs on a develop -> main pull request, run
 # the same way here first. CI's runner has Node 22 already; locally mise gives it.
 RUN := $(if $(CI),,mise exec node@22 --)
 MANIFEST := plugins/cache-live-control/.claude-plugin/plugin.json

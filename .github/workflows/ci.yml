@@ -1,0 +1,73 @@
+name: ci
+
+# The one check, on a pull request into main: `make check` on Linux and macOS
+# in parallel, and `make release`. Its `ci` job is main's only required status
+# check, so nothing merges or publishes until every job here is green;
+# publish.yml runs on the merge. No run starts on a push.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The pinned tools, one place both check legs and the release job read: the
+  # Claude Code `claude plugin validate` runs on, and the Node major.
+  CLAUDE_CODE_VERSION: "2.1.316"
+  NODE_VERSION: "22"
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - run: make check
+
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: make release
+
+  # main's only required status check. always(): a skipped or cancelled job
+  # counts as passed for a required check, so this job fails unless every
+  # job it needs succeeded.
+  ci:
+    name: ci
+    needs: [check, release]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<<"$NEEDS")"
+          if [ -n "$failed" ]; then
+            echo "::error::not every CI job succeeded: $(tr '\n' ' ' <<<"$failed")"
+            exit 1
+          fi
+          echo "every CI job succeeded"

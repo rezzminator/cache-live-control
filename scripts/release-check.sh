@@ -13,6 +13,11 @@ p=$(read_json package.json version)
 b=$(grep -oE 'badge/version-[0-9.]+-' README.md | sed -E 's/badge\/version-|-$//g')
 [ "$p" = "$v" ] || { echo "FAIL package.json says $p, plugin.json $v"; fail=1; }
 [ "$b" = "$v" ] || { echo "FAIL README badge says ${b:-nothing}, plugin.json $v"; fail=1; }
+# The Claude Code the README says the plugin is tested on is the one CI pins.
+c=$(sed -nE 's/^[[:space:]]*CLAUDE_CODE_VERSION:[[:space:]]*"([^"]+)".*/\1/p' .github/workflows/ci.yml)
+[ -n "$c" ] || { echo "ERROR .github/workflows/ci.yml pins no CLAUDE_CODE_VERSION"; exit 2; }
+r=$(grep -oE 'Claude Code [0-9.]+, the version CI pins' README.md | sed -E 's/^Claude Code |, the version CI pins$//g')
+[ "$r" = "$c" ] || { echo "FAIL README says tested on Claude Code ${r:-nothing}, ci.yml pins $c"; fail=1; }
 grep -qE "^## \[$v\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || { echo "FAIL CHANGELOG.md has no dated section for $v"; fail=1; }
 if [ -n "${1:-}" ]; then
   newest=$(printf '%s\n%s\n' "$1" "$v" | sort -V | tail -1)

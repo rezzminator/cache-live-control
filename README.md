@@ -5,7 +5,7 @@
 **Change the prompt-cache TTL of one Claude Code chat, instantly, with no model turn: `/cache 5m`, `/cache main 1h`, `/cache 1h agents`, words in any order, for the main chat, its sub-agents or both, with a one-line warning when a switch touches a warm cache.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.7.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.2-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Tests](https://img.shields.io/badge/tests-309%20passing-brightgreen)](#development)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -73,7 +73,8 @@ claude plugin install cache-live-control@professor
 
 > **Early access.** This plugin is built on Claude Code's function hooks,
 > an early-access surface that may change between releases. It is tested on
-> Claude Code 2.1.283.
+> Claude Code 2.1.316, the version CI pins: `CLAUDE_CODE_VERSION` in
+> [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ## 🧭 Commands
 
@@ -145,7 +146,9 @@ The plugin notes each party's latest model request: when, and the TTL its
 variable held. A party is **warm** until that request's time plus its TTL.
 An automatic TTL counts as 1h for the main chat (the subscription default;
 the plugin cannot see your plan, so it assumes the longer lifetime and says
-"may") and as 5m for sub-agents (row 6 below, measured).
+"may") and as 5m for sub-agents (row 6 below, measured). A variable holding
+a value Claude Code does not take is assumed the same way, and says "may" for
+either party.
 
 A switch always applies at once. When it changed the TTL of a warm party,
 the reply says so in one line:
@@ -543,7 +546,7 @@ npm run live          # live proof in tmux, spends a few cents of Haiku
 
 To try a checkout in a real session, load it with `--plugin-dir plugins/cache-live-control` (its options key is `cache-live-control@inline`), as `npm run live` does. A local directory marketplace whose plugin folder is a symlink into this checkout loads no hooks: Claude Code refuses a hooks module that resolves outside the marketplace (`Path escapes plugin directory: ./cache-live-control.ts (hooks)`, in the `--debug-file` log).
 
-Work lands on `develop`; `main` holds only releases. Merging the `develop → main` pull request is the release: [`release.yml`](./.github/workflows/release.yml) tags the merge commit `cache-live-control--vX.Y.Z` and publishes its notes from [CHANGELOG.md](./CHANGELOG.md). `make release-check` runs that pull request's checks locally first. Pull requests go to `develop`.
+Work lands on `develop`; `main` holds only releases. Merging the `develop → main` pull request is the release: [`publish.yml`](./.github/workflows/publish.yml) tags the merge commit `cache-live-control--vX.Y.Z` and publishes its notes from [CHANGELOG.md](./CHANGELOG.md). `make release-check` runs that pull request's checks locally first. Pull requests go to `develop`.
 
 `plugins/cache-live-control/hooks/cache-live-control.ts` is a thin adapter over `plugins/cache-live-control/src/`:
 

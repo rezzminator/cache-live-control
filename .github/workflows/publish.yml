@@ -1,41 +1,18 @@
-name: release
+name: publish
 
+# Merging the develop -> main pull request is the release: `publish` tags the
+# merge commit cache-live-control--v{version} and creates the GitHub release from the
+# version's CHANGELOG section. ci.yml gates the pull request before the merge;
+# this re-runs no test. No tag is pushed by hand.
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, closed]
-  workflow_dispatch:
+    types: [closed]
 
 permissions:
   contents: read
 
 jobs:
-  check:
-    name: check
-    if: github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm install -g @anthropic-ai/claude-code
-      - run: make check
-
-  release:
-    name: release
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: make release
-
   publish:
     name: publish
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
@@ -43,11 +20,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: The tag is new

@@ -81,12 +81,13 @@ export function guardVerdict(input: GuardInput): Verdict {
   if (record.context === 0 || record.context < floor) return { kind: 'pass' };
   if (warmForMs('agents', record, now) > 0) return { kind: 'pass' };
   const ttl = effectiveTtl('agents', record);
+  const written = record.ttl === 'unknown' ? `its cache TTL is unknown; ${ttl} assumed` : `it was written at ${ttl}`;
   const idle = now - record.at;
   const mult = multiplier(rewriteTtl);
   const equivalent = Math.round(record.context * mult);
   const usd = price === undefined ? '' : ` ($${((equivalent * price) / 1_000_000).toFixed(2)} at $${price}/M base input)`;
   const body =
-    `agent ${label} has been idle ${span(idle)} and its prompt cache expired ${span(idle - LIFE_MS[ttl])} ago (it was written at ${ttl}), ` +
+    `agent ${label} has been idle ${span(idle)} and its prompt cache expired ${span(idle - LIFE_MS[ttl])} ago (${written}), ` +
     `so resuming re-writes its whole context: ~${tokenText(record.context)} tokens × ${mult} (a ${rewriteTtl} cache write) = ~${tokenText(equivalent)} input-token equivalents${usd}.`;
   const tail =
     mode === 'block'
