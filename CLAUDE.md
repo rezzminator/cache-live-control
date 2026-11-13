@@ -34,10 +34,10 @@ in its own process. `README.md` is the behavioural spec.
 - `develop` is the default branch: every change lands there, by a commit or a pull request, and no CI runs on a push. `.github/workflows/ci.yml` runs on the `develop → main` pull request only, and `.github/workflows/publish.yml` on its merge. `develop` is protected by the ruleset `develop keeps its history`: never force-push or delete it.
 - `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after its `ci` check passes: never a direct push, never an admin override. Professor's marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
 - A release, in order:
-  1. On `develop`: bump the version in all four places, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. Every merge into `main` publishes, so a pre-release suffix (`-dev.N`, `-alpha`) becomes the real release version here.
+  1. On `develop`: bump the version in every place the version-bump rule under § Rules names, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. Every merge into `main` publishes, so a pre-release suffix (`-dev.N`, `-alpha`) becomes the real release version here.
   2. `make release-check` passes, after `git fetch origin main`.
   3. Open the `develop → main` pull request. Its `ci.yml` runs the same make targets, `check` on Linux and macOS and `release`, and its `ci` job passes only when every one succeeded; `release` requires the version to have moved past `main`'s and the CHANGELOG section to yield notes.
   4. Merge once `ci` is green. The merge is the release: `publish.yml`'s `publish` job tags the merge commit `cache-live-control--vX.Y.Z` and publishes the GitHub release from the CHANGELOG section. No tag is pushed by hand.
 - Semantic versioning: a fix is a patch; a new option or behaviour is a minor; a renamed or removed option or argument is a major, and its CHANGELOG entry says how to migrate.
-- Publishing: README and marketing changes on `develop` are pushed as soon as they are committed. Code is pushed, and a release is cut, only when the owner asks.
+- Publishing: code is pushed, and a release is cut, only when the owner asks.
 - Git writes go through this repo's gitter, `.claude/agents/gitter.md`.
