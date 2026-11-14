@@ -4,6 +4,12 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-11-14
+
+### Changed
+
+- Contributor orientation (`CLAUDE.md`): the release step points at the version-bump rule, and the publishing rule no longer exempts README and marketing commits from the owner's ask. The plugin itself is unchanged.
+
 ## [0.7.2] — 2026-11-01
 
 ### Fixed
