@@ -4,6 +4,49 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-21
+
+### Added
+
+- keep-warm, folded in from the retired cache-keepwarm plugin 0.8.0: while the main chat or a waiting sub-agent waits on background work, the plugin submits a visible poke before its prompt cache lapses, capped per wait and admitted by a budget against the rewrite it saves. `/keepwarm [on|off|status]` controls it for one chat. Its behaviour is cache-keepwarm 0.8.0's except as § Fixed and § Changed below say; the README's § Keep-warm is its spec. Five options (`keepwarm`, `keepwarmMinContext`, `keepwarmMaxPokes`, `keepwarmSubagents`, `keepwarmSubagentMinContext`) and the `CACHE_LIVE_CONTROL_KEEPWARM_STATE_DIR` variable join § Configuration.
+- The plugin's one hooks module is `hooks/plugin.ts`: Claude Code takes one module per plugin and refuses an event registered twice, so it registers the seven events both features hook once each (the TTL control outermost, keep-warm inside it) and leaves the rest to `hooks/cache-live-control.ts` and `hooks/keepwarm.ts`.
+
+### Changed
+
+- Claude Code plugin types refreshed to 2.1.302 (`types/claude-code.d.ts`).
+- The poke's last line now reads "Otherwise reply with the single word `waiting` and nothing else: this turn only keeps the cache warm, and the plugin reads nothing from your reply." (cache-keepwarm's read "Otherwise reply `waiting` and end your turn."), so a poke turn stays one short reply.
+- Breaking, for cache-keepwarm users: its options, variables, state directory and log directory are renamed (§ Migration).
+
+### Fixed
+
+- Keep-warm no longer stops after one poke when Claude Code compacts the main chat inside the poke's own turn: such a compaction keeps the episode, its poke count and spend, and retakes its prefix from the poke's next request, so the poke turn's settle re-arms the next poke. Any other main-chat compaction still ends the wait.
+- The plugin passes Claude Code 2.1.330's `claude plugin validate --strict` again: relative imports in `hooks/` and `src/` drop the `.ts` suffix, which the validator now reports as TS5097.
+
+### Migration
+
+If you ran cache-keepwarm: disable `cache-keepwarm@professor` and enable `cache-live-control@professor`. `/keepwarm` is unchanged. Move any saved option under `pluginConfigs["cache-live-control@professor"].options`, renamed:
+
+| cache-keepwarm option | cache-live-control option |
+| --- | --- |
+| `enabled` | `keepwarm` |
+| `minContext` | `keepwarmMinContext` |
+| `maxPokes` | `keepwarmMaxPokes` |
+| `subagents` | `keepwarmSubagents` |
+| `subagentMinContext` | `keepwarmSubagentMinContext` |
+
+The old variables are no longer read; set the new ones:
+
+| Old variable | New variable |
+| --- | --- |
+| `CACHE_KEEPWARM_ENABLED` | `CACHE_LIVE_CONTROL_KEEPWARM` |
+| `CACHE_KEEPWARM_MIN_CONTEXT` | `CACHE_LIVE_CONTROL_KEEPWARM_MIN_CONTEXT` |
+| `CACHE_KEEPWARM_MAX_POKES` | `CACHE_LIVE_CONTROL_KEEPWARM_MAX_POKES` |
+| `CACHE_KEEPWARM_SUBAGENTS` | `CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENTS` |
+| `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENT_MIN_CONTEXT` |
+| `CACHE_KEEPWARM_STATE_DIR` | `CACHE_LIVE_CONTROL_KEEPWARM_STATE_DIR` |
+
+The session state files moved from `${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/` to `${XDG_STATE_HOME:-$HOME/.local/state}/cache-live-control/keepwarm/sessions/` (same file names and schema), so a status line reads the new directory. Keep-warm log rows now go to the plugin's own log directory (`$PLUGIN_LOG_DIR/cache-live-control`, else `~/.local/state/cache-live-control/logs`) with `plugin: "keep-warm"`, and its toasts and status lines read `keep-warm · …` where they read `cache-keepwarm · …`. A poke now reaches other plugins' hooks with origin name `cache-live-control`.
+
 ## [0.7.3] — 2026-11-14
 
 ### Changed

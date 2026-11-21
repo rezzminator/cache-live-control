@@ -13,6 +13,7 @@ check:
 	$(RUN) npm test
 	$(RUN) npm run typecheck
 	$(RUN) npm run validate:plugin
+	$(RUN) npm run check:structure
 
 # Run `git fetch origin main` first: the version must move past main's.
 release:

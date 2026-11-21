@@ -1,7 +1,7 @@
-import { isEnvTruthy } from './launch.ts';
-import { OPTION } from './options.ts';
-import { isTtl, PARTIES, VARIABLE, type Party, type Ttl } from './ttl.ts';
-import { warmthLabel, type Records } from './warmth.ts';
+import { isEnvTruthy } from './launch';
+import { OPTION } from './options';
+import { isTtl, PARTIES, VARIABLE, type Party, type Ttl } from './ttl';
+import { warmthLabel, type Records } from './warmth';
 
 // What the TTL is for each party, and where it comes from.
 

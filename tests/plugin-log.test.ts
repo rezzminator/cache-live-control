@@ -1,8 +1,20 @@
 /// <reference path="../types/claude-code.d.ts" />
 // The adapter's wiring onto the plugin-log module: which doors log at which level, and what reaches the
 // screen. The module itself (rows, rotation, the queue) is the plugin's own.
-import type { EngineInterface, On } from 'claude-code';
-import { register } from '../plugins/cache-live-control/hooks/cache-live-control.ts';
+import type { EngineInterface, On, PluginOptions } from 'claude-code';
+import { cacheState, cacheSessionStart, cachePromptSubmit, cacheTurnStart, cacheTurnStep, cacheTurnComplete, cacheSessionCompact, cacheSessionEnd, registerCache } from '../plugins/cache-live-control/hooks/cache-live-control.ts';
+function register(on: On, options: PluginOptions) {
+  // This adapter alone, as plugin.ts registers it beside the other one.
+  const st = cacheState(options);
+  registerCache(on, st);
+  on('session.start', ($, e, next) => cacheSessionStart($, e, next, st));
+  on('prompt.submit', ($, e, next) => cachePromptSubmit($, e, next, st));
+  on('turn.start', ($, e, next) => cacheTurnStart($, e, next, st));
+  on('turn.complete', ($, e, next) => cacheTurnComplete($, e, next, st));
+  on('session.compact', ($, e, next) => cacheSessionCompact($, e, next, st));
+  on('session.end', ($, e, next) => cacheSessionEnd($, e, next, st));
+  on('turn.step', async function* ($, e, next) { return yield* cacheTurnStep($, e, next, st); });
+}
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

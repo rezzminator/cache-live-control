@@ -1,7 +1,7 @@
-import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status.ts';
-import type { Change } from './ttl.ts';
-import { ago } from './events.ts';
-import { effectiveTtl, warmForMs, type StepRecord } from './warmth.ts';
+import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status';
+import type { Change } from './ttl';
+import { ago } from './events';
+import { effectiveTtl, warmForMs, type StepRecord } from './warmth';
 
 // The auto-raise (option raiseAfterExpiries): a main chat on a 5m cache that
 // wakes to an expired one for the Nth time goes to 1h from that wake's own

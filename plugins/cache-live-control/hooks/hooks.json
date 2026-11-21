@@ -1,1 +1,1 @@
-{ "modules": ["./cache-live-control.ts"] }
+{ "modules": ["./plugin.ts"] }

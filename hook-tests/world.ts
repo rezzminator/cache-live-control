@@ -1,5 +1,5 @@
 import type { AgentInfo, On } from 'claude-code';
-import type { Engine } from 'claude-code/testing';
+import { mock, type Engine } from 'claude-code/testing';
 
 // The world beneath the plugin for the variant hook tests (scripts/test-hook-variants.sh):
 // an in-memory environment, a clock that moves only when the test moves it, and
@@ -12,7 +12,10 @@ export const MIN = 60_000;
 export type World = ReturnType<typeof world>;
 
 export function world(on: On, initial: Record<string, string> = {}) {
-  const env = new Map(Object.entries(initial));
+  // Keep-warm shares the plugin's hooks module; these tests are the TTL control's, so it stays off, over a store and a status line that answer.
+  const env = new Map(Object.entries({ CACHE_LIVE_CONTROL_KEEPWARM: '0', ...initial }));
+  mock.store(on);
+  on('ui.status', async () => ({ value: undefined }) as never);
   // The kit cannot execute host processes. Capture the real append argv;
   // root tests/plugin-log.test.ts drives the adapter with a real execFile.
   const pluginLogRows: { path: string; row: string }[] = [];
@@ -20,7 +23,7 @@ export function world(on: On, initial: Record<string, string> = {}) {
   on('session.id', async () => ({ value: 'variant-session' }));
   on('process.run', async (_$, e) => {
     for (let i = 6; i < e.argv.length; i += 2) pluginLogRows.push({ path: `${e.argv[4]}/${e.argv[i]}`, row: e.argv[i + 1]! });
-    return { value: { exitCode: 0, stdout: '', stderr: '' } };
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
   });
   /** The clock moves only when the test moves it; `fails` makes a read of it throw; `during` runs once inside the next read. */
   let now = 1_000_000_000_000;
@@ -90,7 +93,7 @@ export function world(on: On, initial: Record<string, string> = {}) {
     const act = during.set;
     delete during.set;
     if (act !== undefined) await act();
-    return { value: undefined };
+    return { value: {} };
   });
   on('command.register', async (_$, e) => ({ value: { command: e.name } }));
   on('session.start', async (_$, e) => ({ cwd: e.cwd }));

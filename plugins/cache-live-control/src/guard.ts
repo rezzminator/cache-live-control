@@ -1,8 +1,8 @@
-import type { AgentRecord, AgentRecords } from './agents.ts';
-import { span } from './events.ts';
-import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status.ts';
-import type { Ttl } from './ttl.ts';
-import { effectiveTtl, warmForMs } from './warmth.ts';
+import type { AgentRecord, AgentRecords } from './agents';
+import { span } from './events';
+import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status';
+import type { Ttl } from './ttl';
+import { effectiveTtl, warmForMs } from './warmth';
 
 // The cold-resume guard (option resumeGuard): a SendMessage to a sub-agent whose
 // prompt cache has expired re-writes its whole context at the cache-write

@@ -1,6 +1,6 @@
-import type { GuardMode } from './guard.ts';
-import { parseCount, parsePrice, parseTokens } from './options.ts';
-import { PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
+import type { GuardMode } from './guard';
+import { parseCount, parsePrice, parseTokens } from './options';
+import { PARTIES, type Change, type Party, type Ttl } from './ttl';
 
 // `/cache` arguments to the one thing the command does. Words come in any
 // order: a group is some parties and one TTL, party-first (`main 1h`, closed

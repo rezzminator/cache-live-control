@@ -1,5 +1,5 @@
-import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status.ts';
-import type { Ttl } from './ttl.ts';
+import { isForced5m, resolveParty, type EnvSnapshot, type Ours } from './status';
+import type { Ttl } from './ttl';
 
 // The opt-in TTL notice (option ttlNotice): a short note the main chat's model
 // reads beside a prompt, naming the TTL it runs on and how to delegate on it.

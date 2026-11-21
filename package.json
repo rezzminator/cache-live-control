@@ -1,26 +1,28 @@
 {
   "name": "cache-live-control",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "private": true,
-  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
+  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both, and keep its background waits warm with visible pokes before the cache expires.",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "vitest run --dir tests && npm run test:hooks",
     "test:unit": "vitest run --dir tests",
-    "test:hooks": "claude plugin test plugins/cache-live-control && scripts/test-hook-variants.sh",
+    "test:hooks": "command -v claude >/dev/null 2>&1 || { echo 'NOT RUN: missing claude'; exit 3; }; claude plugin test plugins/cache-live-control && scripts/test-hook-variants.sh",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.hooks.json",
-    "validate:plugin": "claude plugin validate --strict plugins/cache-live-control",
+    "validate:plugin": "command -v claude >/dev/null 2>&1 || { echo 'NOT RUN: missing claude'; exit 3; }; claude plugin validate --strict plugins/cache-live-control",
     "release:check": "scripts/release-check.sh",
-    "live": "scripts/live-proof.sh"
+    "live": "scripts/live-proof.sh",
+    "check:structure": "node scripts/keepwarm-check-structure.mjs",
+    "live:keepwarm": "scripts/keepwarm-live-proof.sh"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.4"
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   },
   "keywords": [
     "claude-code",
@@ -34,6 +36,7 @@
     "token-cost",
     "function-hooks",
     "claude-mods",
-    "professor"
+    "professor",
+    "keep-warm"
   ]
 }
