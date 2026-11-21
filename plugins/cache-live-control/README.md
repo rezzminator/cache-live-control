@@ -13,6 +13,8 @@ Change the prompt-cache TTL of one Claude Code chat, instantly and with no model
 
 Sub-agent cache protection, every piece off by default: `resumeGuard` (`warn` or `block`, with `resumeGuardMinTokens` and `resumeGuardPrice`) weighs a `SendMessage` to a sub-agent whose cache has expired, and `[resume-anyway]` at the start of the message sends it anyway; `/cache` sets each live: `raise N|off`, `guard off|warn|block`, `guard floor N`, `guard price N|off`. The option `summaries` (`block`; unset by default, so the summaries run) and `/cache summaries off|on` mark every request so a gateway that honours the mark answers Claude Code's 30-second sub-agent progress summaries itself.
 
+Keep-warm: while the chat or a waiting sub-agent waits on background work, a visible, capped, budgeted poke keeps its prompt cache from lapsing (`/keepwarm [on|off|status]`, options `keepwarm` and `keepwarmMaxPokes`, `keepwarmMinContext`, `keepwarmSubagents`, `keepwarmSubagentMinContext`).
+
 It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. The full documentation, the precedence table and the cost note live in the repository: https://github.com/rezzminator/cache-live-control
 
 Built and maintained with [Professor](https://github.com/rezzminator/professor).

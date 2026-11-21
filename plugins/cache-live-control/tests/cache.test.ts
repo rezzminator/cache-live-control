@@ -14,7 +14,10 @@ const HANDOFF_MAIN = 'CACHE_LIVE_CONTROL_MAIN_TTL';
 const HANDOFF_AGENTS = 'CACHE_LIVE_CONTROL_AGENTS_TTL';
 
 function world(on: On, initial: Record<string, string> = {}) {
-  const env = new Map(Object.entries(initial));
+  // Keep-warm shares the plugin's hooks module; these tests are the TTL control's, so it stays off, over a store and a status line that answer.
+  const env = new Map(Object.entries({ CACHE_LIVE_CONTROL_KEEPWARM: '0', ...initial }));
+  mock.store(on);
+  on('ui.status', async () => ({ value: undefined }) as never);
   const commands: string[] = [];
   const logs: string[] = [];
   const process = { fails: false };
@@ -27,7 +30,7 @@ function world(on: On, initial: Record<string, string> = {}) {
       const path = `${e.argv[4]}/${e.argv[i]}`;
       files.set(path, [...(files.get(path) ?? []), e.argv[i + 1]!]);
     }
-    return { value: { exitCode: 0, stdout: '', stderr: '' } };
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
   });
   on('ui.log', async (_$, e) => { logs.push(e.text); return { value: undefined } as never; });
   on('session.id', async () => ({ value: 'log-session' }));
@@ -49,7 +52,7 @@ function world(on: On, initial: Record<string, string> = {}) {
     if (failures.ttl && e.name === MAIN) throw new Error('TTL write refused');
     if (e.value === undefined) env.delete(e.name);
     else env.set(e.name, e.value);
-    return { value: undefined };
+    return { value: {} };
   });
   on('agent.list', async () => { if (failures.listing) throw new Error('agent list refused'); return { value: [] } as never; });
   on('tool.call', async (_$, e) => { calls.push((e as unknown as { message: string }).message); return { result: 'sent' } as never; });
@@ -319,7 +322,7 @@ describe('warm-cache warning', () => {
   });
 
   test('a warm switch inside a main turn also toasts; the reply is unchanged', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' });
+    const w = world(on, { [MAIN]: '1h', HOME: '/hook-test/home' });
     await $.session.start(START);
     await $.turn.start({ text: 'count', turnId: 't' });
     await step($);
@@ -331,7 +334,7 @@ describe('warm-cache warning', () => {
   });
 
   test('no toast once the main turn completed, or for a cold switch inside a turn', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' });
+    const w = world(on, { [MAIN]: '1h', HOME: '/hook-test/home' });
     await $.session.start(START);
     await $.turn.start({ text: 'count', turnId: 't' });
     expect((await $.command.run(run('agents 1h'))).text).toBe('main 1h · agents 1h');
@@ -343,7 +346,7 @@ describe('warm-cache warning', () => {
   });
 
   test('an aborted main turn also ends it: no toast after', async ($, on) => {
-    const w = world(on, { [MAIN]: '1h' });
+    const w = world(on, { [MAIN]: '1h', HOME: '/hook-test/home' });
     await $.session.start(START);
     await $.turn.start({ text: 'count', turnId: 't' });
     await step($);

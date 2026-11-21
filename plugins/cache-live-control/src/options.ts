@@ -16,6 +16,8 @@ export const OPTION: Readonly<Record<Party, string>> = { main: 'mainTtl', agents
 // beats the default. A variable that is unset or blank (whitespace only) is
 // absent; one that is bad is named and the default is used. A boolean reads
 // 1, 0, true or false in any case; a list option takes a JSON array (none here).
+// The five keep-warm options (`keepwarm`, `keepwarmMinContext`, ...) are resolved
+// by resolveKeepwarmOptions below, the same precedence with its own bad-value rule.
 // `mainTtl` and `subagentTtl` are read at session start by handoff.ts, which
 // also owns their launcher spelling and the word `auto`.
 export const ENV: Readonly<Record<string, string>> = {
@@ -27,6 +29,11 @@ export const ENV: Readonly<Record<string, string>> = {
   resumeGuardMinTokens: 'CACHE_LIVE_CONTROL_RESUME_GUARD_MIN_TOKENS',
   resumeGuardPrice: 'CACHE_LIVE_CONTROL_RESUME_GUARD_PRICE',
   summaries: 'CACHE_LIVE_CONTROL_SUMMARIES',
+  keepwarm: 'CACHE_LIVE_CONTROL_KEEPWARM',
+  keepwarmMinContext: 'CACHE_LIVE_CONTROL_KEEPWARM_MIN_CONTEXT',
+  keepwarmMaxPokes: 'CACHE_LIVE_CONTROL_KEEPWARM_MAX_POKES',
+  keepwarmSubagents: 'CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENTS',
+  keepwarmSubagentMinContext: 'CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENT_MIN_CONTEXT',
 };
 
 /** The environment variables resolveOptions reads, by name: a value is a string or absent. */
@@ -143,4 +150,34 @@ export function resolveOptions(options: Readonly<Record<string, unknown>>, env: 
   if (word === 'block') out.summaries = 'block';
   else if (word !== 'allow' && !isEmpty(summaries.raw)) out.errors.push(`${summaries.label} ${JSON.stringify(summaries.raw)} ignored: use block, allow or empty`);
   return out;
+}
+
+/** The keep-warm options as the keep-warm adapter reads them; `bad` names each ignored one, by its variable when the variable was set, else by its option. */
+export interface KeepwarmOptions { enabled: boolean; minContext: number; maxPokes: number; subagentMinContext: number; subagents: boolean; bad: string[] }
+
+/** Each keep-warm setting and the option that carries it. */
+const KEEPWARM_OPTION = { enabled: 'keepwarm', minContext: 'keepwarmMinContext', maxPokes: 'keepwarmMaxPokes', subagentMinContext: 'keepwarmSubagentMinContext', subagents: 'keepwarmSubagents' } as const;
+
+/** Variable over option over default; a set variable that is bad leaves the default, never the option. */
+export function resolveKeepwarmOptions(options: Readonly<Record<string, unknown>>, env: EnvValues = {}): KeepwarmOptions {
+  const defaults = { enabled: true, minContext: 20000, maxPokes: 4, subagentMinContext: 100000, subagents: true };
+  const result: KeepwarmOptions = { ...defaults, bad: [] };
+  for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+    const option = KEEPWARM_OPTION[key], name = ENV[option] as string, raw = env[name];
+    const fromEnv = typeof raw === 'string' && raw.trim() !== '';
+    const value = fromEnv ? raw.trim() : options[option];
+    // A blank option, like a blank variable, is absent.
+    if (value === undefined || (typeof value === 'string' && value.trim() === '')) continue;
+    let parsed: unknown = value;
+    if (key === 'enabled' || key === 'subagents') {
+      if (typeof value === 'string' && /^(1|0|true|false)$/i.test(value)) parsed = /^(1|true)$/i.test(value);
+      if (typeof parsed !== 'boolean') parsed = undefined;
+    } else {
+      parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+      if (!Number.isSafeInteger(parsed) || Number(parsed) < (key === 'subagentMinContext' ? 0 : 1)) parsed = undefined;
+    }
+    if (parsed === undefined) { result.bad.push(fromEnv ? name : option); continue; }
+    Object.assign(result, { [key]: parsed });
+  }
+  return result;
 }

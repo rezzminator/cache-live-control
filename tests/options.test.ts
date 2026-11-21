@@ -1,3 +1,4 @@
+import { URL } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { HANDOFF } from '../plugins/cache-live-control/src/handoff.ts';
@@ -130,6 +131,11 @@ describe('the option variables', () => {
       resumeGuardMinTokens: FLOOR,
       resumeGuardPrice: PRICE,
       summaries: SUMMARIES,
+      keepwarm: 'CACHE_LIVE_CONTROL_KEEPWARM',
+      keepwarmMinContext: 'CACHE_LIVE_CONTROL_KEEPWARM_MIN_CONTEXT',
+      keepwarmMaxPokes: 'CACHE_LIVE_CONTROL_KEEPWARM_MAX_POKES',
+      keepwarmSubagents: 'CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENTS',
+      keepwarmSubagentMinContext: 'CACHE_LIVE_CONTROL_KEEPWARM_SUBAGENT_MIN_CONTEXT',
     });
   });
 

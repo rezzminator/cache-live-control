@@ -1,7 +1,7 @@
 {
   "name": "cache-live-control",
-  "version": "0.7.3",
-  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both.",
+  "version": "0.8.0-dev.1",
+  "description": "Change the prompt-cache TTL (5m, 1h or automatic) of one Claude Code chat with /cache: instantly, with no model turn, for the main chat, its sub-agents or both, and keep its background waits warm with visible keep-warm pokes.",
   "license": "MIT",
   "author": {
     "name": "Reza · Professor",
@@ -9,7 +9,21 @@
   },
   "repository": "https://github.com/rezzminator/cache-live-control",
   "homepage": "https://github.com/rezzminator/cache-live-control",
-  "keywords": ["claude-code", "claude-code-plugin", "prompt-cache", "prompt-caching", "cache-ttl", "cache", "sub-agent", "subagent", "token-cost", "function-hooks", "claude-mods", "professor"],
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "prompt-cache",
+    "prompt-caching",
+    "cache-ttl",
+    "cache",
+    "sub-agent",
+    "subagent",
+    "token-cost",
+    "function-hooks",
+    "claude-mods",
+    "professor",
+    "keep-warm"
+  ],
   "userConfig": {
     "mainTtl": {
       "type": "string",
@@ -58,6 +72,36 @@
       "title": "Sub-agents: progress summaries",
       "description": "block: while a sub-agent runs, Claude Code asks its model for a 3-5 word status line about every 30 s over the agent's whole conversation, and this plugin marks every request (header x-cache-live-control-summaries: block, through ANTHROPIC_CUSTOM_HEADERS) so a gateway on ANTHROPIC_BASE_URL that honours the mark answers it itself; without such a gateway the mark changes nothing. allow or empty keeps Claude Code's behaviour. /cache summaries off|on switches it live.",
       "default": ""
+    },
+    "keepwarm": {
+      "type": "boolean",
+      "title": "Keep-warm: keep tracked waits warm",
+      "description": "Keep qualifying background waits warm with visible keep-warm pokes. The launch default; /keepwarm on or off overrides it for this session.",
+      "default": true
+    },
+    "keepwarmMinContext": {
+      "type": "number",
+      "title": "Keep-warm: minimum context tokens",
+      "description": "Do not keep-warm poke a main chat with a smaller context; its rewrite is cheap.",
+      "default": 20000
+    },
+    "keepwarmMaxPokes": {
+      "type": "number",
+      "title": "Keep-warm: pokes per wait",
+      "description": "Send at most this many keep-warm pokes to one thread while its pending items stay the same and nothing else happens; any real activity or a changed set of items starts a fresh count.",
+      "default": 4
+    },
+    "keepwarmSubagents": {
+      "type": "boolean",
+      "title": "Keep-warm: poke waiting sub-agents",
+      "description": "Keep-warm poke waiting sub-agents that own attributable pending work. Each sub-agent poke also wakes its parent for one real turn, which the budget forecast counts.",
+      "default": true
+    },
+    "keepwarmSubagentMinContext": {
+      "type": "number",
+      "title": "Keep-warm: minimum sub-agent context tokens",
+      "description": "Do not keep-warm poke a sub-agent with a smaller context; with the parent wake, a smaller rewrite is not worth saving.",
+      "default": 100000
     }
   }
 }

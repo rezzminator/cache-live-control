@@ -1,4 +1,4 @@
-import type { AgentInfo, EngineInterface, On, PluginOptions, Register } from 'claude-code';
+import type { AgentInfo, EngineInterface, EventName, Hook, On, PluginOptions } from 'claude-code';
 import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecords } from '../src/agents.ts';
 import { formatEvents, pushEvent, type Event } from '../src/events.ts';
 import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard.ts';
@@ -551,7 +551,9 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
   }
 }
 
-export const register: Register = (on: On, options: PluginOptions) => {
+type HookArgs<E extends EventName> = Parameters<Hook<E>>;
+
+export function cacheState(options: PluginOptions): State {
   const resolved = resolveOptions(options as Record<string, unknown>);
   const st: State = {
     logWork: Promise.resolve(),
@@ -572,56 +574,115 @@ export const register: Register = (on: On, options: PluginOptions) => {
     conversation: 0,
   };
 
-  on('session.start', async ($, e, next) => {
-    await ready(st, $);
-    const result = await next(e);
-    await startSession(st, $);
-    return result;
-  });
+  return st;
+}
 
-  // Whether a main-chat turn is running, for the warm-cache toast, and the
-  // auto-raise's second look at the wake: a turn no prompt.submit hook saw (a
-  // plugin's own self-inject) still goes out at the raised TTL, because the
-  // variable is set before `next` and so before the turn's first request.
-  // turn.start carries no agentId today; it is read in case a sub-agent's turn
-  // ever carries one. turn.complete fires for aborted turns too.
-  on('turn.start', async ($, e, next) => {
-    await ready(st, $);
+export async function cacheSessionStart($: EngineInterface, e: HookArgs<'session.start'>[1], next: HookArgs<'session.start'>[2], st: State) {
+  await ready(st, $);
+  const result = await next(e);
+  await startSession(st, $);
+  return result;
+}
+// Whether a main-chat turn is running, for the warm-cache toast, and the
+// auto-raise's second look at the wake: a turn no prompt.submit hook saw (a
+// plugin's own self-inject) still goes out at the raised TTL, because the
+// variable is set before `next` and so before the turn's first request.
+// turn.start carries no agentId today; it is read in case a sub-agent's turn
+// ever carries one. turn.complete fires for aborted turns too.
+export async function cacheTurnStart($: EngineInterface, e: HookArgs<'turn.start'>[1], next: HookArgs<'turn.start'>[2], st: State) {
+  await ready(st, $);
+  try {
+    if ((e as { agentId?: string }).agentId === undefined) {
+      st.mainTurnRunning = true;
+      const submitted = st.submitted;
+      delete st.submitted;
+      if (submitted === undefined || submitted.at !== st.records.main?.at) await weighWake(st, $);
+    }
+  } catch (error) {
+    fault(st, $, 'warning', 'noting-a-turn-start-failed', 'turn.start', error, `cache-live-control: noting a turn start failed: ${message(error)}`, true);
+  }
+  return next(e);
+}
+export async function cacheTurnComplete(_$: EngineInterface, e: HookArgs<'turn.complete'>[1], next: HookArgs<'turn.complete'>[2], st: State) {
+  if (e.agentId === undefined) st.mainTurnRunning = false;
+  return next(e);
+}
+// A request is noted without holding it, and the stream itself passes through
+// untouched; a sub-agent's usage waits for its record.
+export async function* cacheTurnStep($: EngineInterface, e: HookArgs<'turn.step'>[1], next: HookArgs<'turn.step'>[2], st: State) {
+  await ready(st, $);
+  if (e.agentId === undefined) {
+    recordStep(st, $, 'main').catch((error: unknown) => {
+      fault(st, $, 'warning', 'noting-a-main-request-for-the-warm-cache-warning-failed', 'turn.step', error, `cache-live-control: noting a main request for the warm-cache warning failed: ${message(error)}`, true);
+    });
+    return yield* next(e);
+  }
+  const noted = agentRequest(st, $, e.agentId);
+  const result = yield* next(e);
+  await noted;
+  const context = contextOf(result.usage);
+  if (context !== undefined) st.agents = noteUsage(st.agents, e.agentId, context);
+  return result;
+}
+// A prompt that wakes an idle session (any origin: typed, a background
+// task's return, a scheduled trigger) is weighed for the auto-raise first, so
+// the variable is final before the note below names it and before the
+// request leaves. A prompt typed or delivered into a running turn
+// (e.turnId set) starts no turn and is no wake.
+// Option ttlNotice: a prompt carries the note when the main TTL differs from
+// the one last told. prompt.submit is the main chat's alone: a sub-agent's
+// prompt goes through agent.spawn, and the input carries no agentId.
+export async function cachePromptSubmit($: EngineInterface, e: HookArgs<'prompt.submit'>[1], next: HookArgs<'prompt.submit'>[2], st: State) {
+  await ready(st, $);
+  let stamp: State['submitted'];
+  if (e.turnId === undefined && (await weighWake(st, $))) {
+    stamp = { at: st.records.main?.at };
+    st.submitted = stamp;
+  }
+  let n: Ttl | null = null;
+  if (st.options.notice === true) {
     try {
-      if ((e as { agentId?: string }).agentId === undefined) {
-        st.mainTurnRunning = true;
-        const submitted = st.submitted;
-        delete st.submitted;
-        if (submitted === undefined || submitted.at !== st.records.main?.at) await weighWake(st, $);
-      }
+      n = noticeTtl(await readEnv($), st.ours);
     } catch (error) {
-      fault(st, $, 'warning', 'noting-a-turn-start-failed', 'turn.start', error, `cache-live-control: noting a turn start failed: ${message(error)}`, true);
+      fault(st, $, 'warning', 'building-the-ttl-notice-failed', 'prompt.submit', error, `cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, true);
     }
-    return next(e);
-  });
+  }
+  if (n === st.noticed) n = null;
+  const result = await next(n === null ? e : { ...e, context: [...(e.context ?? []), noticeText(n)] });
+  if (result.drop === undefined) {
+    if (n !== null) st.noticed = n;
+  } else if (stamp !== undefined && st.submitted === stamp) {
+    // The prompt did not enter, so it starts no turn: its verdict spares none.
+    delete st.submitted;
+  }
+  return result;
+}
+// A main-chat compaction takes the note out: the next prompt carries it
+// again. It also rewrites the prefix: the wake after it is no expiry.
+export async function cacheSessionCompact($: EngineInterface, e: HookArgs<'session.compact'>[1], next: HookArgs<'session.compact'>[2], st: State) {
+  await ready(st, $);
+  const result = await next(e);
+  if (forgetsNotice(e, result)) {
+    delete st.noticed;
+    // A precompute installs nothing: the prefix, and its expiry, stand.
+    if (e.trigger !== 'precompute') await restartRaise(st, $, onBoundary, 'compact');
+  }
+  return result;
+}
+// A /clear or a resume ends the conversation here (no session.start fires for
+// the one that follows): the next one has not read the note, and the
+// auto-raise counts its session over.
+export async function cacheSessionEnd($: EngineInterface, e: HookArgs<'session.end'>[1], next: HookArgs<'session.end'>[2], st: State) {
+  await ready(st, $);
+  delete st.noticed;
+  await restartRaise(st, $, onSessionEnd, 'end');
+  endAgents(st);
+  const result = await next(e);
+  await flushPluginLog(st, $);
+  return result;
+}
 
-  on('turn.complete', async (_$, e, next) => {
-    if (e.agentId === undefined) st.mainTurnRunning = false;
-    return next(e);
-  });
-
-  // A request is noted without holding it, and the stream itself passes through
-  // untouched; a sub-agent's usage waits for its record.
-  on('turn.step', async function* ($, e, next) {
-    await ready(st, $);
-    if (e.agentId === undefined) {
-      recordStep(st, $, 'main').catch((error: unknown) => {
-        fault(st, $, 'warning', 'noting-a-main-request-for-the-warm-cache-warning-failed', 'turn.step', error, `cache-live-control: noting a main request for the warm-cache warning failed: ${message(error)}`, true);
-      });
-      return yield* next(e);
-    }
-    const noted = agentRequest(st, $, e.agentId);
-    const result = yield* next(e);
-    await noted;
-    const context = contextOf(result.usage);
-    if (context !== undefined) st.agents = noteUsage(st.agents, e.agentId, context);
-    return result;
-  });
+export function registerCache(on: On, st: State) {
 
   // A new sub-agent's name and parent label it for the resume guard.
   on('agent.spawn', async ($, e, next) => {
@@ -654,63 +715,4 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return runCommand(st, $, e.args);
   });
 
-  // A prompt that wakes an idle session (any origin: typed, a background
-  // task's return, a scheduled trigger) is weighed for the auto-raise first, so
-  // the variable is final before the note below names it and before the
-  // request leaves. A prompt typed or delivered into a running turn
-  // (e.turnId set) starts no turn and is no wake.
-  // Option ttlNotice: a prompt carries the note when the main TTL differs from
-  // the one last told. prompt.submit is the main chat's alone: a sub-agent's
-  // prompt goes through agent.spawn, and the input carries no agentId.
-  on('prompt.submit', async ($, e, next) => {
-    await ready(st, $);
-    let stamp: State['submitted'];
-    if (e.turnId === undefined && (await weighWake(st, $))) {
-      stamp = { at: st.records.main?.at };
-      st.submitted = stamp;
-    }
-    let n: Ttl | null = null;
-    if (st.options.notice === true) {
-      try {
-        n = noticeTtl(await readEnv($), st.ours);
-      } catch (error) {
-        fault(st, $, 'warning', 'building-the-ttl-notice-failed', 'prompt.submit', error, `cache-live-control: building the TTL notice failed, this prompt goes without it: ${message(error)}`, true);
-      }
-    }
-    if (n === st.noticed) n = null;
-    const result = await next(n === null ? e : { ...e, context: [...(e.context ?? []), noticeText(n)] });
-    if (result.drop === undefined) {
-      if (n !== null) st.noticed = n;
-    } else if (stamp !== undefined && st.submitted === stamp) {
-      // The prompt did not enter, so it starts no turn: its verdict spares none.
-      delete st.submitted;
-    }
-    return result;
-  });
-
-  // A main-chat compaction takes the note out: the next prompt carries it
-  // again. It also rewrites the prefix: the wake after it is no expiry.
-  on('session.compact', async ($, e, next) => {
-    await ready(st, $);
-    const result = await next(e);
-    if (forgetsNotice(e, result)) {
-      delete st.noticed;
-      // A precompute installs nothing: the prefix, and its expiry, stand.
-      if (e.trigger !== 'precompute') await restartRaise(st, $, onBoundary, 'compact');
-    }
-    return result;
-  });
-
-  // A /clear or a resume ends the conversation here (no session.start fires for
-  // the one that follows): the next one has not read the note, and the
-  // auto-raise counts its session over.
-  on('session.end', async ($, e, next) => {
-    await ready(st, $);
-    delete st.noticed;
-    await restartRaise(st, $, onSessionEnd, 'end');
-    endAgents(st);
-    const result = await next(e);
-    await flushPluginLog(st, $);
-    return result;
-  });
-};
+}
