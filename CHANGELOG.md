@@ -4,6 +4,8 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-21
+
 ### Added
 
 - keep-warm, folded in from the retired cache-keepwarm plugin 0.8.0: while the main chat or a waiting sub-agent waits on background work, the plugin submits a visible poke before its prompt cache lapses, capped per wait and admitted by a budget against the rewrite it saves. `/keepwarm [on|off|status]` controls it for one chat. Its behaviour is cache-keepwarm 0.8.0's except as § Fixed and § Changed below say; the README's § Keep-warm is its spec. Five options (`keepwarm`, `keepwarmMinContext`, `keepwarmMaxPokes`, `keepwarmSubagents`, `keepwarmSubagentMinContext`) and the `CACHE_LIVE_CONTROL_KEEPWARM_STATE_DIR` variable join § Configuration.
@@ -18,6 +20,7 @@ Every release of cache-live-control. Versions follow [semantic versioning](https
 ### Fixed
 
 - Keep-warm no longer stops after one poke when Claude Code compacts the main chat inside the poke's own turn: such a compaction keeps the episode, its poke count and spend, and retakes its prefix from the poke's next request, so the poke turn's settle re-arms the next poke. Any other main-chat compaction still ends the wait.
+- The plugin passes Claude Code 2.1.330's `claude plugin validate --strict` again: relative imports in `hooks/` and `src/` drop the `.ts` suffix, which the validator now reports as TS5097.
 
 ### Migration
 
