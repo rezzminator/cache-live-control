@@ -1,5 +1,5 @@
-import type { EnvSnapshot } from './status.ts';
-import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
+import type { EnvSnapshot } from './status';
+import { isTtl, PARTIES, type Change, type Party, type Ttl } from './ttl';
 
 // Whether a party's prompt cache is still warm, and which `/cache` changes
 // would switch a warm cache's TTL: the TTL lives in each request's

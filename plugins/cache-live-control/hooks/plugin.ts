@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code';
-import { cacheState, cacheSessionStart, cacheTurnStart, cacheTurnStep, cacheTurnComplete, cachePromptSubmit, cacheSessionCompact, cacheSessionEnd, registerCache } from './cache-live-control.ts';
-import { keepwarmState, keepwarmSessionStart, keepwarmTurnStart, keepwarmTurnStep, keepwarmTurnComplete, keepwarmPromptSubmit, keepwarmSessionCompact, keepwarmSessionEnd, registerKeepwarm } from './keepwarm.ts';
+import { cacheState, cacheSessionStart, cacheTurnStart, cacheTurnStep, cacheTurnComplete, cachePromptSubmit, cacheSessionCompact, cacheSessionEnd, registerCache } from './cache-live-control';
+import { keepwarmState, keepwarmSessionStart, keepwarmTurnStart, keepwarmTurnStep, keepwarmTurnComplete, keepwarmPromptSubmit, keepwarmSessionCompact, keepwarmSessionEnd, registerKeepwarm } from './keepwarm';
 
 // Claude Code loads one hooks module per plugin (hooks.json `modules` holds at most one path) and refuses
 // the same event registered twice under one matcher, so this file is that module. The seven events both

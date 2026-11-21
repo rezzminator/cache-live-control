@@ -1,17 +1,17 @@
 import type { EngineInterface, EventName, Hook, On, PluginOptions, Timer } from 'claude-code';
-import { resolveKeepwarmOptions, type KeepwarmOptions } from '../src/options.ts';
-import { resolveTtl, observeTtl, badTtl, type Ttl, type TtlResolution, type TtlEnv } from '../src/keepwarm/ttl.ts';
-import { fromStop, reconcile, ownedFromTool, warmReceipt, sanitizeLabel, firstSeen, type WaitItem, type EndedItem } from '../src/keepwarm/waits.ts';
-import { TTL_MS, WARM_1H, nextFireAt } from '../src/keepwarm/schedule.ts';
-import { budgetLedger, closeLedger, emptySessionLedger, recordWarm, recordOutcome, warmSpend, pokeForecast, wakeForecast, type Usage, type SessionLedger, type ClosedLedger } from '../src/keepwarm/budget.ts';
-import { decideWarm, type Decision, type ReasonCode } from '../src/keepwarm/decision.ts';
-import { parseControl, effectiveEnabled } from '../src/keepwarm/control.ts';
-import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/keepwarm/resume.ts';
-import { metaRow, type LogRow } from '../src/keepwarm/log.ts';
-import { PluginLogQueue, levelRow, pluginLogDir, type PluginLogLevel } from '../src/plugin-log.ts';
-import { compactFacts, compactOutcome, compactReset } from '../src/keepwarm/compact.ts';
-import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/keepwarm/pokes.ts';
-import { pokeMessage, formatState, sessionState, stateDirectory, formatOutcome, type StatusView, type PokeLimit } from '../src/keepwarm/status.ts';
+import { resolveKeepwarmOptions, type KeepwarmOptions } from '../src/options';
+import { resolveTtl, observeTtl, badTtl, type Ttl, type TtlResolution, type TtlEnv } from '../src/keepwarm/ttl';
+import { fromStop, reconcile, ownedFromTool, warmReceipt, sanitizeLabel, firstSeen, type WaitItem, type EndedItem } from '../src/keepwarm/waits';
+import { TTL_MS, WARM_1H, nextFireAt } from '../src/keepwarm/schedule';
+import { budgetLedger, closeLedger, emptySessionLedger, recordWarm, recordOutcome, warmSpend, pokeForecast, wakeForecast, type Usage, type SessionLedger, type ClosedLedger } from '../src/keepwarm/budget';
+import { decideWarm, type Decision, type ReasonCode } from '../src/keepwarm/decision';
+import { parseControl, effectiveEnabled } from '../src/keepwarm/control';
+import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/keepwarm/resume';
+import { metaRow, type LogRow } from '../src/keepwarm/log';
+import { PluginLogQueue, levelRow, pluginLogDir, type PluginLogLevel } from '../src/plugin-log';
+import { compactFacts, compactOutcome, compactReset } from '../src/keepwarm/compact';
+import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/keepwarm/pokes';
+import { pokeMessage, formatState, sessionState, stateDirectory, formatOutcome, type StatusView, type PokeLimit } from '../src/keepwarm/status';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string; compacted?: boolean };
 /** The main chat's poke in flight: its text, the episode it serves and, once its turn started, that turn's id; `entered` once the submit
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */

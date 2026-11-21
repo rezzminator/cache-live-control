@@ -1,4 +1,4 @@
-import type { Ttl } from './ttl.ts';
+import type { Ttl } from './ttl';
 export type ReasonCode = 'agent-not-waiting' | 'eligible' | 'off' | 'busy' | 'stale' | 'in-flight' | 'inventory-unknown' | 'nothing-pending' | 'ended' | 'usage-unknown' | 'usage-invalid' | 'small' | '1h-unproven' | 'cache-cold' | 'expiry-safety' | 'wake-unknown' | 'cannot-wake' | 'poke-limit' | 'imminent' | 'budget' | 'marginal' | 'poke-failed' | 'timer-failed' | 'resumed' | 'idle';
 export interface DecisionItem { id: string; expectedBackAt: number | null; wake: 'yes' | 'no' | 'unknown' }
 export interface DecisionInput { agentStatus?: string; fault?: 'poke-failed' | 'timer-failed'; enabled: boolean; busy: boolean; currentEpoch: boolean; inFlight: boolean; known: boolean; context: number | null; minContext: number; lastSendAt: number | null; now: number; ttl: Ttl; warm1h: boolean; items: readonly DecisionItem[]; endedId?: string; pokes: { count: number; max: number }; spent: number; forecast: number; saved: number }

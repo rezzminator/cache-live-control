@@ -1,6 +1,6 @@
-import { ENV, type ResolvedOptions } from './options.ts';
-import type { EnvSnapshot } from './status.ts';
-import { PARTIES, type Change, type Party, type Ttl } from './ttl.ts';
+import { ENV, type ResolvedOptions } from './options';
+import type { EnvSnapshot } from './status';
+import { PARTIES, type Change, type Party, type Ttl } from './ttl';
 
 // The starting TTLs as variables, read once at session start: the options
 // `mainTtl` and `subagentTtl` as `CACHE_LIVE_CONTROL_MAIN_TTL` and

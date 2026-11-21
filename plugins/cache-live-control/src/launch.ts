@@ -1,4 +1,4 @@
-import type { EnvSnapshot } from './status.ts';
+import type { EnvSnapshot } from './status';
 
 // ENABLE_PROMPT_CACHING_1H turns 1h on for the main chat AND every sub-agent
 // (Claude Code: sub-agents are "5 minutes unless ENABLE_PROMPT_CACHING_1H=1").

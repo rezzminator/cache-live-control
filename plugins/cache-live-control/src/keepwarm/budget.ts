@@ -1,5 +1,5 @@
 import type { ModelUsage } from 'claude-code';
-import type { Ttl } from './ttl.ts';
+import type { Ttl } from './ttl';
 export type Usage = Pick<ModelUsage, 'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens'>;
 export interface BudgetLedger { context: number; ttl: Ttl; spent: number; warms: number; allowance: number; protecting: number; remaining: number }
 export interface ClosedLedger { elapsedMs: number; readPercent: number | null; netSaved: number | null; reason: 'estimated' | 'early' | 'miss' | 'unknown' }

@@ -1,5 +1,5 @@
-import type { Ttl, TtlSource } from './ttl.ts';
-import type { SessionLedger } from './budget.ts';
+import type { Ttl, TtlSource } from './ttl';
+import type { SessionLedger } from './budget';
 export interface Anchor { at: number; context: number; tail: number; model: string; ttl: Ttl; ttlSource: TtlSource }
 export interface SavedSession { version: 1; sessionId: string; savedAt: number; anchor: Anchor | null; ledger: SessionLedger }
 export const RESTORE_HORIZON_MS = 7 * 86_400_000;

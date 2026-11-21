@@ -1,5 +1,5 @@
-import type { GuardMode } from './guard.ts';
-import { isTtl, PARTIES, type Party, type Ttl } from './ttl.ts';
+import type { GuardMode } from './guard';
+import { isTtl, PARTIES, type Party, type Ttl } from './ttl';
 
 // The plugin's `userConfig`: a starting TTL per party, applied at session start
 // unless a variable or a launcher's handoff (handoff.ts) comes first, and the

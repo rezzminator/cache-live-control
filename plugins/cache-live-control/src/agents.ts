@@ -1,4 +1,4 @@
-import { warmForMs, type StepRecord } from './warmth.ts';
+import { warmForMs, type StepRecord } from './warmth';
 
 // One record per sub-agent: when its latest request went out, the TTL its
 // variable held, and the size of its context. They feed the resume guard

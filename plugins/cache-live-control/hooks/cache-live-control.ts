@@ -1,19 +1,19 @@
 import type { AgentInfo, EngineInterface, EventName, Hook, On, PluginOptions } from 'claude-code';
-import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecords } from '../src/agents.ts';
-import { formatEvents, pushEvent, type Event } from '../src/events.ts';
-import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard.ts';
-import { startPlan, type HandoffSnapshot } from '../src/handoff.ts';
-import { launchChange } from '../src/launch.ts';
-import { isUnboundMode } from '../src/mode.ts';
-import { forgetsNotice, noticeText, noticeTtl } from '../src/notice.ts';
-import { resolveOptions, type EnvValues, type ResolvedOptions } from '../src/options.ts';
-import { parseArgs, type Settings } from '../src/parse.ts';
-import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, setAfter as setRaiseAfter, type FailureKind, type RaiseState } from '../src/raise.ts';
-import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status.ts';
-import { isMarked, summariesStatus, withMark } from '../src/summaries.ts';
-import { type Change, type Party, type Ttl } from '../src/ttl.ts';
-import { levelRow, onScreen, pluginLogDir, PluginLogQueue, type FlushResult, type PluginLogLevel } from '../src/plugin-log.ts';
-import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth.ts';
+import { AGENT_CAP, contextOf, noteRequest, noteSpawn, noteUsage, prune, type AgentRecords } from '../src/agents';
+import { formatEvents, pushEvent, type Event } from '../src/events';
+import { DEFAULT_FLOOR, guardStatus, guardVerdict, resolveTarget, rewriteTtl, takeOverride, tokenText, type GuardConfig } from '../src/guard';
+import { startPlan, type HandoffSnapshot } from '../src/handoff';
+import { launchChange } from '../src/launch';
+import { isUnboundMode } from '../src/mode';
+import { forgetsNotice, noticeText, noticeTtl } from '../src/notice';
+import { resolveOptions, type EnvValues, type ResolvedOptions } from '../src/options';
+import { parseArgs, type Settings } from '../src/parse';
+import { markFailed, markFired, newRaise, onBoundary, onCommand, onSessionEnd, onWake, raiseStatus, setAfter as setRaiseAfter, type FailureKind, type RaiseState } from '../src/raise';
+import { formatState, formatStatus, type EnvSnapshot, type Ours, type Via } from '../src/status';
+import { isMarked, summariesStatus, withMark } from '../src/summaries';
+import { type Change, type Party, type Ttl } from '../src/ttl';
+import { levelRow, onScreen, pluginLogDir, PluginLogQueue, type FlushResult, type PluginLogLevel } from '../src/plugin-log';
+import { recordedTtl, warmChanges, warmNote, type Records } from '../src/warmth';
 
 // Thin adapter: every decision lives in src/. Claude Code reads the TTL
 // variables on every request, so setting one changes the next request.

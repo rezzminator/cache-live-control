@@ -1,6 +1,6 @@
-import type { Ttl, TtlSource } from './ttl.ts';
-import type { BudgetLedger, SessionLedger, Usage } from './budget.ts';
-import type { CompactOutcome, CompactTrigger } from './compact.ts';
+import type { Ttl, TtlSource } from './ttl';
+import type { BudgetLedger, SessionLedger, Usage } from './budget';
+import type { CompactOutcome, CompactTrigger } from './compact';
 export interface LogRow { kind?: 'subagent'; agentId?: string; trigger?: CompactTrigger; outcome?: CompactOutcome; at: number; anchorAt?: number; event: string; epoch: number; items: readonly { id: string; kind: string }[]; ttl: Ttl; ttlSource: TtlSource; context: number | null; usage?: Usage; spent: number; reason?: string; warms?: number; pokes?: { count: number; max: number }; ledger?: BudgetLedger; session?: SessionLedger }
 /** The metadata-only copy of a row: a field the producer adds beyond LogRow never reaches the log. */
 export function metaRow(r: LogRow): LogRow {

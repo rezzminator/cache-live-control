@@ -1,7 +1,7 @@
-import type { Ttl, TtlSource } from './ttl.ts';
-import type { WaitItem } from './waits.ts';
-import type { BudgetLedger, ClosedLedger, SessionLedger } from './budget.ts';
-import type { ReasonCode } from './decision.ts';
+import type { Ttl, TtlSource } from './ttl';
+import type { WaitItem } from './waits';
+import type { BudgetLedger, ClosedLedger, SessionLedger } from './budget';
+import type { ReasonCode } from './decision';
 export type StatusItem = Pick<WaitItem, 'kind' | 'label'> & { firstSeenAt: number };
 export interface PokeLimit { count: number; max: number }
 export interface StatusView { enabled: boolean; source: 'launch' | 'session'; reason: ReasonCode; pokes?: PokeLimit; items: readonly StatusItem[]; now: number; warms: number; nextInMs: number; ttl: Ttl; ttlSource: TtlSource; context: number | null; ledger: BudgetLedger | null; session: SessionLedger; lastOutcome: ClosedLedger | null; detail?: string; warnings?: readonly string[] }

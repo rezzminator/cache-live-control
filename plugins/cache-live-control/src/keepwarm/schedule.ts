@@ -1,4 +1,4 @@
-import type { Ttl } from './ttl.ts';
+import type { Ttl } from './ttl';
 export const WARM_1H = true;
 export const SAFETY_MS = 15_000;
 export const TTL_MS = { '5m': 300_000, '1h': 3_600_000 } as const;
